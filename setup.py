@@ -6,13 +6,13 @@ setup(
     version=__version__,
     python_requires=">=3.9,<3.13",
     install_requires=[
-        "pandas==2.0.3",
-        "pyarrow==14.0.2",
+        "pandas==2.2.0",
+        "pyarrow==15.0.0",
         "scikit-learn==1.2.2",
-        # "sentencepiece==0.1.99",
+        "sentencepiece==0.1.99",
         "spacy==3.7.2",
         "protobuf==3.20.3",  # required for deberta-v3 tokenizer
-        "transformers==4.36.2",
+        "transformers==4.37.0",
         "pytorch-lightning==2.1.3",
         "tqdm==4.66.1",
     ],
