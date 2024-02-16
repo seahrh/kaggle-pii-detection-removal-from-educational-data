@@ -9,7 +9,7 @@ setup(
         "pandas==2.0.3",
         "pyarrow==14.0.2",
         "scikit-learn==1.2.2",
-        #"sentencepiece==0.1.99",
+        # "sentencepiece==0.1.99",
         "spacy==3.7.2",
         "protobuf==3.20.3",  # required for deberta-v3 tokenizer
         "transformers==4.36.2",
@@ -22,10 +22,10 @@ setup(
             "sentence-transformers==2.2.2",
         ],
         "lint": [
-            "black==23.7.0",
+            "black==24.2.0",
             "isort==5.13.2",
-            "pre-commit==3.3.3",
-            "flake8==6.1.0",
+            "pre-commit==3.6.1",
+            "flake8==7.0.0",
             "mypy==1.8.0",
         ],
         "tests": [
