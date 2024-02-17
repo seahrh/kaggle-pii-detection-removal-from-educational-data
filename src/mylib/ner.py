@@ -90,7 +90,7 @@ class NerDataset(Dataset):
             for wid in word_ids:
                 # Only label the first token of a given word.
                 if wid is not None and wid != prev:
-                    labels.append(word_labels[wid])
+                    labels.append(self.LABEL_TO_ID[word_labels[wid]])
                 else:
                     labels.append(-100)  # Set the special tokens to -100.
                 prev = wid
@@ -312,7 +312,7 @@ class NerTask(Task):
                 labels=labels,
             )
             log.info(f"train_data_sample_frac={frac}, len(ds)={len(ds)}\nds[0]={ds[0]}")
-            del data, tmp
+            del data
             gc.collect()
         log.info(f"Prepare dataset...DONE. Time taken {str(tim.elapsed)}")
         return ds
@@ -325,12 +325,12 @@ class NerTask(Task):
         gc.collect()
         torch.cuda.empty_cache()
         with scml.Timer() as tim:
-            # train final model with max data, so do not use GroupKFold
+            # TODO split beforehand and save versioned test set
             splitter = KFold(
                 n_splits=int(100 / self.conf.getint("final_model_validation_percent"))
             )
             dummy = np.zeros(len(ds))
-            y = np.array(ds.labels, dtype=np.float32)
+            y = [max(z) for z in ds.labels]
             for ti, vi in splitter.split(dummy, y=y):
                 tra_ds = torch.utils.data.Subset(ds, ti)
                 val_ds = torch.utils.data.Subset(ds, vi)

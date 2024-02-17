@@ -13,7 +13,6 @@ from tqdm import tqdm
 from mylib import NerTask
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-pd.set_option("use_inf_as_na", True)
 pd.set_option("max_info_columns", 9999)
 pd.set_option("display.max_columns", 9999)
 pd.set_option("display.max_rows", 9999)
@@ -55,7 +54,7 @@ def _main(argv=None):
         "--task",
         dest="task_name",
         required=True,
-        help="Task type e.g. 'summary_grading'",
+        help="Task type e.g. 'ner'",
     )
     parser.add_argument(
         "--conf", dest="conf", required=True, help="filepath to job.ini"
