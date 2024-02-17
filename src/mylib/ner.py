@@ -344,13 +344,16 @@ class NerTask(Task):
                 conf=mylib.transformers_conf(self.conf),
             )
             devices: Union[List[int], str, int] = "auto"
+            accelerator: str = "auto"
             if torch.cuda.is_available():
+                accelerator = "gpu"
                 devices = scml.to_int_list(self.conf["gpus"])
             elif torch.backends.mps.is_available():
-                devices = "mps"
+                accelerator = "mps"
+                devices = 1
             trainer = Trainer(
                 default_root_dir=self.conf["job_dir"],
-                accelerator="gpu" if torch.cuda.is_available() else "auto",
+                accelerator=accelerator,
                 devices=devices,
                 max_epochs=self.conf.getint("epochs"),
                 callbacks=training_callbacks(patience=self.conf.getint("patience")),

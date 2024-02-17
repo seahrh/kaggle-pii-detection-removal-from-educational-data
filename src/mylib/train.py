@@ -1,0 +1,97 @@
+import argparse
+import os
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import pytorch_lightning as pl
+import scml
+import torch
+from scml import configparserx as cpx
+from tqdm import tqdm
+
+from mylib import NerTask
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+pd.set_option("use_inf_as_na", True)
+pd.set_option("max_info_columns", 9999)
+pd.set_option("display.max_columns", 9999)
+pd.set_option("display.max_rows", 9999)
+pd.set_option("max_colwidth", 9999)
+tqdm.pandas()
+
+
+log = scml.get_logger(__name__)
+
+
+def _check_device() -> None:
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            log.info(
+                f"device={i}, {torch.cuda.get_device_name(i)}"
+                f"\nMem Allocated: {round(torch.cuda.memory_allocated(i) / 1024 ** 3, 1)} GB"
+                f"\nMem Cached: {round(torch.cuda.memory_reserved(i) / 1024**3, 1)} GB"
+            )
+    else:
+        log.info("cuda not available")
+
+
+def _main(argv=None):
+    _check_device()
+    node_rank = int(os.environ.get("NODE_RANK", -1))
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    world_size = int(os.environ.get("WORLD_SIZE", -1))
+    log.info(f"NODE_RANK={node_rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--home-dir",
+        dest="home_dir",
+        default="",
+        required=False,
+        help="path to home directory",
+    )
+    parser.add_argument("--job-name", dest="job_name", required=False, help="job name")
+    parser.add_argument(
+        "--task",
+        dest="task_name",
+        required=True,
+        help="Task type e.g. 'summary_grading'",
+    )
+    parser.add_argument(
+        "--conf", dest="conf", required=True, help="filepath to job.ini"
+    )
+    args, unknown_args = parser.parse_known_args(argv)
+    conf = cpx.load(Path(args.conf))
+    if args.home_dir != "":
+        conf["DEFAULT"]["home_dir"] = str(Path(args.home_dir).resolve())
+    job_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_dir: str = conf[args.task_name]["model_dir"]
+    backbone: str = ""
+    if "backbone" in conf[args.task_name]:
+        backbone = conf[args.task_name]["backbone"]
+    if backbone == "" and "teacher_backbone" in conf[args.task_name]:
+        backbone = conf[args.task_name]["teacher_backbone"]
+    if backbone == "":
+        raise ValueError("backbone must not be empty string")
+    conf[args.task_name]["backbone"] = backbone
+    job_dir = Path(model_dir) / args.task_name / backbone / job_ts
+    if args.job_name is not None and len(args.job_name) != 0:
+        job_dir = Path(model_dir) / args.job_name / job_ts
+    job_dir.mkdir(parents=True, exist_ok=True)
+    pl.seed_everything(conf["DEFAULT"].getint("seed"))
+    conf["DEFAULT"]["job_ts"] = job_ts
+    conf["DEFAULT"]["job_dir"] = str(job_dir)
+    log.info(f"args={args}\nunknown_args={unknown_args}")
+    log.info(cpx.as_dict(conf))
+    task = None
+    if args.task_name == NerTask.name:
+        task = NerTask(
+            conf=conf,
+        )
+    if task is None:
+        raise NotImplementedError(f"Unsupported task type: {args.task_name}")
+    task.run()
+
+
+if __name__ == "__main__":
+    _main()
