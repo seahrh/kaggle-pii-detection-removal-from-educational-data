@@ -180,7 +180,7 @@ class NerModel(pl.LightningModule):
                 s["swa_lr"] = str(self.lr)
         # TODO pass instantiated model to constructor if custom model
         config = AutoConfig.from_pretrained(str(pretrained_dir))
-        config.problem_type = "classification"
+        config.problem_type = "single_label_classification"
         config.id2label = NerDataset.ID_TO_LABEL
         config.label2id = NerDataset.LABEL_TO_ID
         if conf is not None:
