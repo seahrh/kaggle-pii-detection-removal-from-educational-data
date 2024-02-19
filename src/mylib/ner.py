@@ -94,6 +94,7 @@ class NerDataset(Dataset):
                 self.texts.append(texts[i][j:k])
                 if labels is not None:
                     self.labels.append(labels[i][j:k])
+        self.word_ids: List[List[Optional[int]]] = [[] for _ in range(len(self.texts))]
 
     def __getitem__(self, idx):
         res = {}
@@ -107,6 +108,7 @@ class NerDataset(Dataset):
             return_offsets_mapping=False,
             return_special_tokens_mask=False,
         )
+        self.word_ids[idx] = enc.word_ids()
         for k, v in enc.items():
             t = torch.tensor(v)
             log.debug(f"{k} {t.shape}")
