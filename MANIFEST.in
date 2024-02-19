@@ -1,0 +1,4 @@
+exclude *.ipynb
+include *.ini
+
+graft models/ner/deberta_v3_base/20240219_153810
