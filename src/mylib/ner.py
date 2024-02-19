@@ -66,7 +66,7 @@ class NerDataset(Dataset):
         while i < n:
             j = min(n, i + window_length)
             res.append((i, j))
-            i = j - window_stride
+            i = i + window_length - window_stride
         return res
 
     def __init__(
@@ -354,7 +354,7 @@ class NerTask(Task):
         return ds
 
     def _train_final_model(
-        self, ds: NerDataset, hps: Dict[str, ParamType], num_workers: int = 0
+        self, ds: NerDataset, hps: Dict[str, ParamType], num_workers: int = 2
     ) -> None:
         log.info("Train final model on best Hps...")
         log.info(f"hps={hps}")
@@ -404,13 +404,14 @@ class NerTask(Task):
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=True,
                     num_workers=num_workers,
+                    persistent_workers=True,
                 ),
                 val_dataloaders=DataLoader(
                     val_ds,
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=False,
                     num_workers=num_workers,
-                    # persistent_workers=True,
+                    persistent_workers=True,
                 ),
             )
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
