@@ -4,7 +4,7 @@ import math
 import random
 from configparser import ConfigParser, SectionProxy
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pytorch_lightning as pl
@@ -57,42 +57,70 @@ class NerDataset(Dataset):
         14: "I-STREET_ADDRESS",
     }
     LABEL_TO_ID: Mapping[str, int] = {v: k for k, v in ID_TO_LABEL.items()}
+    IGNORE_LABEL: int = -100
+
+    @staticmethod
+    def split(n: int, window_length: int, window_stride: int) -> List[Tuple[int, int]]:
+        res = []
+        i = 0
+        while i < n:
+            j = min(n, i + window_length)
+            res.append((i, j))
+            i = j - window_stride
+        return res
 
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        window_length: int,
+        window_stride: int,
         texts: List[List[str]],
+        document_ids: List[str],
         labels: Optional[List[List[str]]] = None,
     ):
         self.tokenizer = tokenizer
-        self.texts: List[List[str]] = texts
-        self.labels = [] if labels is None else labels
+        self.document_ids: List[str] = []
+        self.word_ranges: List[Tuple[int, int]] = []
+        self.texts: List[List[str]] = []
+        self.labels: List[List[str]] = []
+        for i in range(len(texts)):
+            for j, k in self.split(
+                n=len(texts[i]),
+                window_length=window_length,
+                window_stride=window_stride,
+            ):
+                self.document_ids.append(document_ids[i])
+                self.word_ranges.append((j, k))
+                self.texts.append(texts[i][j:k])
+                if labels is not None:
+                    self.labels.append(labels[i][j:k])
 
     def __getitem__(self, idx):
         res = {}
         enc = self.tokenizer(
             self.texts[idx],
             truncation=True,
-            is_split_into_words=True,
             padding="max_length",
+            is_split_into_words=True,  # processing an array of string tokens (instead of a string)
             add_special_tokens=True,
             return_overflowing_tokens=False,
             return_offsets_mapping=False,
             return_special_tokens_mask=False,
         )
         for k, v in enc.items():
-            res[k] = torch.tensor(v).squeeze(0)
+            t = torch.tensor(v)
+            log.debug(f"{k} {t.shape}")
+            res[k] = t
         if len(self.labels) != 0:
-            word_ids = enc.word_ids()
             word_labels = self.labels[idx]
-            prev = None
             labels = []
-            for wid in word_ids:
+            prev = None
+            for wid in enc.word_ids():
                 # Only label the first token of a given word.
                 if wid is not None and wid != prev:
                     labels.append(self.LABEL_TO_ID[word_labels[wid]])
                 else:
-                    labels.append(-100)  # Set the special tokens to -100.
+                    labels.append(self.IGNORE_LABEL)  # Set the special tokens to -100.
                 prev = wid
             res["labels"] = torch.tensor(
                 labels,
@@ -242,7 +270,7 @@ class NerModel(pl.LightningModule):
         if batch_idx == 0:
             self.val_pred = []
         logits = outputs.logits.detach()
-        log.debug(f"{logits.size()} logits={logits}")
+        log.debug(f"{logits.shape} logits={logits}")
         self.val_pred += logits.tolist()
 
     def configure_optimizers(self):
@@ -296,20 +324,28 @@ class NerTask(Task):
                 data = tmp
             texts: List[List[str]] = []
             labels: List[List[str]] = []
+            dids: List[str] = []
             for row in data:
                 texts.append(row["tokens"])
                 labels.append(row["labels"])
+                dids.append(str(row["document"]))
+            model_max_length: int = self.conf.getint("model_max_length")
             tokenizer = AutoTokenizer.from_pretrained(
                 self.mc["directory"],
-                model_max_length=self.conf.getint("model_max_length"),
+                model_max_length=model_max_length,
             )
             config = AutoConfig.from_pretrained(self.mc["directory"])
+            if hasattr(config, "max_position_embeddings"):
+                config.max_position_embeddings = model_max_length
             if str(getattr(config, "model_type")).lower() == "llama":
                 tokenizer.pad_token = tokenizer.eos_token
             ds = NerDataset(
                 tokenizer=tokenizer,
                 texts=texts,
                 labels=labels,
+                document_ids=dids,
+                window_length=self.conf.getint("window_length"),
+                window_stride=self.conf.getint("window_stride"),
             )
             log.info(f"train_data_sample_frac={frac}, len(ds)={len(ds)}\nds[0]={ds[0]}")
             del data
@@ -318,7 +354,7 @@ class NerTask(Task):
         return ds
 
     def _train_final_model(
-        self, ds: NerDataset, hps: Dict[str, ParamType], num_workers: int = 2
+        self, ds: NerDataset, hps: Dict[str, ParamType], num_workers: int = 0
     ) -> None:
         log.info("Train final model on best Hps...")
         log.info(f"hps={hps}")
@@ -374,6 +410,7 @@ class NerTask(Task):
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=False,
                     num_workers=num_workers,
+                    # persistent_workers=True,
                 ),
             )
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
