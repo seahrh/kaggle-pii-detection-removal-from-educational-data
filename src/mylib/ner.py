@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import scml
 import torch
@@ -15,6 +16,7 @@ from scml import torchx
 
 # from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import KFold
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import (
@@ -30,7 +32,9 @@ from mylib import ParamType, Task, Trainer, training_callbacks
 
 __all__ = [
     "NerDataset",
+    "blend_predictions",
     "predict_ner",
+    "predict_ner_proba",
     "NerModel",
     "NerTask",
 ]
@@ -134,6 +138,27 @@ class NerDataset(Dataset):
         return len(self.texts)
 
 
+def blend_predictions(
+    weights: np.ndarray,
+    dw_map: Mapping[
+        Tuple[int, int],
+        torch.Tensor,
+    ],
+    thresholds: Mapping[str, float],
+) -> pd.DataFrame:
+    rows = []
+    for k, v in dw_map.items():
+        v = np.array(v, dtype=np.float32)
+        p = np.matmul(weights, v).flatten()
+        i = np.argmax(p)
+        label = NerDataset.ID_TO_LABEL[i]
+        if i != 0 and p[i] >= thresholds[label]:
+            rows.append({"document": k[0], "token": k[1], "label": label})
+    df = pd.DataFrame.from_records(rows)
+    df["row_id"] = df.index
+    return df
+
+
 def predict_ner(
     ds: NerDataset,
     model: PreTrainedModel,
@@ -161,6 +186,26 @@ def predict_ner(
             log.debug(f"logits.size={logits.size()}\n{logits}")
             res += logits.tolist()
     return np.array(res, dtype=dtype)
+
+
+def predict_ner_proba(
+    ds: NerDataset,
+    model: PreTrainedModel,
+    batch_size: int,
+    device: Optional[torch.device] = None,
+    progress_bar: bool = False,
+    dtype=np.float32,
+) -> np.ndarray:
+    logits = predict_ner(
+        ds=ds,
+        model=model,
+        batch_size=batch_size,
+        device=device,
+        progress_bar=progress_bar,
+        dtype=dtype,
+    )
+    y_proba = F.softmax(torch.tensor(logits, dtype=dtype), dim=-1)
+    return np.array(y_proba, dtype=dtype)
 
 
 # noinspection PyAbstractClass
