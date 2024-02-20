@@ -13,8 +13,7 @@ import scml
 import torch
 from pytorch_lightning.loggers import CSVLogger
 from scml import torchx
-
-# from sklearn.metrics import mean_squared_error
+from sklearn.metrics import fbeta_score
 from sklearn.model_selection import KFold
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
@@ -464,11 +463,28 @@ class NerTask(Task):
                     persistent_workers=True if num_workers > 0 else False,
                 ),
             )
+            if model.best_val_pred is not None:
+                y_true, y_pred = [], []
+                for i, index in enumerate(vi):
+                    for j, label in enumerate(ds[index]["labels"]):
+                        if label == NerDataset.IGNORE_LABEL:
+                            continue
+                        y_true.append(label)
+                        # (sequences, sequence length, classes)
+                        y_pred.append(np.argmax(model.best_val_pred[i][j]))
+                self.validation_result = {
+                    "epochs": trainer.current_epoch + 1,
+                    "micro_f5": fbeta_score(
+                        y_true=y_true,
+                        y_pred=y_pred,
+                        beta=5,
+                        average="micro",
+                    ),
+                }
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
 
     def run(self) -> None:
         with scml.Timer() as tim:
-            self._save_job_config()
             ds = self._dataset()
             self._train_final_model(
                 ds=ds,
@@ -477,5 +493,6 @@ class NerTask(Task):
                     "swa_start_epoch": self.conf.getfloat("swa_start_epoch"),
                 },
             )
+            self._save_job_config()
             self._copy_tokenizer_files(src=Path(self.mc["directory"]))
         log.info(f"Total time taken {str(tim.elapsed)}. Saved {self.conf['job_dir']}")

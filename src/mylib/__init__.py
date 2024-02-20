@@ -3,7 +3,7 @@ import os
 import shutil
 from configparser import ConfigParser, SectionProxy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import numpy as np
 import pytorch_lightning as pl
@@ -87,6 +87,7 @@ class Task:
         schedulers: List[str] = conf[self.name]["schedulers"].split()
         self.scheduler_conf = [conf[s] for s in schedulers]
         self.config = AutoConfig.from_pretrained(self.mc["directory"])
+        self.validation_result: Optional[Mapping] = None
 
     def run(self) -> None:
         raise NotImplementedError
@@ -94,7 +95,11 @@ class Task:
     def _save_job_config(self) -> None:
         filepath = Path(self.conf["job_dir"]) / "train.json"
         with open(str(filepath), "w") as f:
-            json.dump(cpx.as_dict(self.full_conf), f)
+            d: Dict = {}
+            if self.validation_result is not None:
+                d.update(self.validation_result)
+            d.update(cpx.as_dict(self.full_conf))
+            json.dump(d, f)
 
     def _copy_tokenizer_files(self, src: Path) -> None:
         log.info("Copy tokenizer files...")
