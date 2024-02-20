@@ -420,7 +420,7 @@ class NerTask(Task):
                 tra_ds = torch.utils.data.Subset(ds, ti)
                 val_ds = torch.utils.data.Subset(ds, vi)
                 break
-            log.info(f"len(tra_ds)={len(tra_ds)}, len(val_ds)={len(val_ds)}")
+            log.info(f"len(tra_ds)={len(tra_ds):,}, len(val_ds)={len(val_ds):,}")
             model = NerModel(
                 pretrained_dir=Path(self.mc["directory"]),
                 lr=float(hps["lr"]),
