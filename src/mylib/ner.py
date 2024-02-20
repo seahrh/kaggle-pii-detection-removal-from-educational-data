@@ -204,7 +204,7 @@ def predict_ner_proba(
         progress_bar=progress_bar,
         dtype=dtype,
     )
-    y_proba = F.softmax(torch.tensor(logits, dtype=dtype), dim=-1)
+    y_proba = F.softmax(torch.tensor(logits, dtype=torch.float32), dim=-1)
     return np.array(y_proba, dtype=dtype)
 
 
