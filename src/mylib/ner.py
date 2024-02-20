@@ -13,7 +13,7 @@ import scml
 import torch
 from pytorch_lightning.loggers import CSVLogger
 from scml import torchx
-from sklearn.metrics import fbeta_score
+from sklearn.metrics import fbeta_score, precision_score, recall_score
 from sklearn.model_selection import KFold
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
@@ -399,6 +399,60 @@ class NerTask(Task):
         log.info(f"Prepare dataset...DONE. Time taken {str(tim.elapsed)}")
         return ds
 
+    def _validation_result(
+        self,
+        ds: Union[Dataset, torch.utils.data.Subset],
+        predictions: np.ndarray,
+        epochs: int,
+    ) -> None:
+        y_true: List[int] = []
+        y_pred: List[int] = []
+        for i in range(len(ds)):
+            for j, label in enumerate(ds[i]["labels"]):
+                if label < 1:  # exclude labels 0 and -100
+                    continue
+                y_true.append(label)
+                # (sequences, sequence length, classes)
+                y_pred.append(np.argmax(predictions[i][j]).item())
+        rows = []
+        label_indices = list(NerDataset.ID_TO_LABEL.keys())
+        label_indices.sort()
+        for label_index in label_indices:
+            label_y_true = np.where(y_true == label_index, 1, 0)
+            exists = label_y_true.sum() > 0
+            f5: float = 0
+            recall: float = 0
+            precision: float = 0
+            if exists:
+                f5 = fbeta_score(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    beta=5,
+                    average="binary",
+                )
+                recall = recall_score(y_true=y_true, y_pred=y_pred, average="binary")
+                precision = precision_score(
+                    y_true=y_true, y_pred=y_pred, average="binary"
+                )
+            rows.append((f5, recall, precision, label_index))
+        rows.sort()
+        labels = {}
+        for f5, recall, precision, label_index in rows:
+            label = NerDataset.ID_TO_LABEL[label_index]
+            labels[label] = {"micro_f5": f5, "recall": recall, "precision": precision}
+        self.validation_result = {
+            "micro_f5": fbeta_score(
+                y_true=y_true,
+                y_pred=y_pred,
+                beta=5,
+                average="micro",
+            ),
+            "recall": recall_score(y_true=y_true, y_pred=y_pred, average="micro"),
+            "precision": precision_score(y_true=y_true, y_pred=y_pred, average="micro"),
+            "labels": labels,
+            "epochs": epochs,
+        }
+
     def _train_final_model(
         self,
         ds: NerDataset,
@@ -464,23 +518,11 @@ class NerTask(Task):
                 ),
             )
             if model.best_val_pred is not None:
-                y_true, y_pred = [], []
-                for i, index in enumerate(vi):
-                    for j, label in enumerate(ds[index]["labels"]):
-                        if label == NerDataset.IGNORE_LABEL:
-                            continue
-                        y_true.append(label)
-                        # (sequences, sequence length, classes)
-                        y_pred.append(np.argmax(model.best_val_pred[i][j]))
-                self.validation_result = {
-                    "epochs": trainer.current_epoch + 1,
-                    "micro_f5": fbeta_score(
-                        y_true=y_true,
-                        y_pred=y_pred,
-                        beta=5,
-                        average="micro",
-                    ),
-                }
+                self._validation_result(
+                    ds=val_ds,
+                    predictions=model.best_val_pred,
+                    epochs=trainer.current_epoch + 1,
+                )
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
 
     def run(self) -> None:
