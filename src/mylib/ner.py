@@ -401,7 +401,9 @@ class NerTask(Task):
         return ds
 
     def _train_final_model(
-        self, ds: NerDataset, hps: Dict[str, ParamType], num_workers: int = 2
+        self,
+        ds: NerDataset,
+        hps: Dict[str, ParamType],
     ) -> None:
         log.info("Train final model on best Hps...")
         log.info(f"hps={hps}")
@@ -444,6 +446,7 @@ class NerTask(Task):
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
                 log_every_n_steps=100,
             )
+            num_workers: int = self.conf.getint("dataloader_num_workers")
             trainer.fit(
                 model,
                 train_dataloaders=DataLoader(
@@ -451,14 +454,14 @@ class NerTask(Task):
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=True,
                     num_workers=num_workers,
-                    persistent_workers=True,
+                    persistent_workers=True if num_workers > 0 else False,
                 ),
                 val_dataloaders=DataLoader(
                     val_ds,
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=False,
                     num_workers=num_workers,
-                    persistent_workers=True,
+                    persistent_workers=True if num_workers > 0 else False,
                 ),
             )
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
