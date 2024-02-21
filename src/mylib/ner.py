@@ -14,7 +14,6 @@ import torch
 from pytorch_lightning.loggers import CSVLogger
 from scml import torchx
 from sklearn.metrics import fbeta_score, precision_score, recall_score
-from sklearn.model_selection import KFold
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -369,61 +368,94 @@ class NerTask(Task):
         conf: ConfigParser,
     ):
         super().__init__(conf=conf)
+        self.tra_ds: Optional[NerDataset] = None
+        self.val_ds: Optional[NerDataset] = None
 
-    def _dataset(self) -> NerDataset:
+    @staticmethod
+    def _dataset(
+        filepath: str,
+        tokenizer_directory: str,
+        model_max_length: int,
+        window_length: int,
+        window_stride: int,
+        sample_frac: float = 1,
+    ) -> NerDataset:
+        with open(filepath) as f:
+            data = json.load(f)
+        if sample_frac < 1:
+            tmp = []
+            for i in random.sample(
+                range(len(data)), k=math.ceil(sample_frac * len(data))
+            ):
+                tmp.append(data[i])
+            data = tmp
+        texts: List[List[str]] = []
+        labels: List[List[str]] = []
+        dids: List[str] = []
+        for row in data:
+            texts.append(row["tokens"])
+            labels.append(row["labels"])
+            dids.append(str(row["document"]))
+        config = AutoConfig.from_pretrained(tokenizer_directory)
+        if hasattr(config, "max_position_embeddings"):
+            config.max_position_embeddings = model_max_length
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_directory,
+            model_max_length=model_max_length,
+            config=config,
+        )
+        if str(getattr(config, "model_type")).lower() == "llama":
+            tokenizer.pad_token = tokenizer.eos_token
+        return NerDataset(
+            tokenizer=tokenizer,
+            texts=texts,
+            labels=labels,
+            document_ids=dids,
+            window_length=window_length,
+            window_stride=window_stride,
+        )
+
+    def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
         with scml.Timer() as tim:
-            with open(self.conf["train_data_file"]) as f:
-                data = json.load(f)
-            frac: float = self.conf.getfloat("train_data_sample_frac")
-            if frac < 1:
-                tmp = []
-                for i in random.sample(range(len(data)), k=math.ceil(frac * len(data))):
-                    tmp.append(data[i])
-                data = tmp
-            texts: List[List[str]] = []
-            labels: List[List[str]] = []
-            dids: List[str] = []
-            for row in data:
-                texts.append(row["tokens"])
-                labels.append(row["labels"])
-                dids.append(str(row["document"]))
-            model_max_length: int = self.conf.getint("model_max_length")
-            tokenizer = AutoTokenizer.from_pretrained(
-                self.mc["directory"],
-                model_max_length=model_max_length,
-            )
-            config = AutoConfig.from_pretrained(self.mc["directory"])
-            if hasattr(config, "max_position_embeddings"):
-                config.max_position_embeddings = model_max_length
-            if str(getattr(config, "model_type")).lower() == "llama":
-                tokenizer.pad_token = tokenizer.eos_token
-            ds = NerDataset(
-                tokenizer=tokenizer,
-                texts=texts,
-                labels=labels,
-                document_ids=dids,
+            train_data_sample_frac = self.conf.getfloat("train_data_sample_frac")
+            self.tra_ds = self._dataset(
+                filepath=self.conf["train_data_file"],
+                tokenizer_directory=self.mc["directory"],
+                model_max_length=self.conf.getint("model_max_length"),
                 window_length=self.conf.getint("window_length"),
                 window_stride=self.conf.getint("window_stride"),
+                sample_frac=train_data_sample_frac,
             )
-            log.info(f"train_data_sample_frac={frac}, len(ds)={len(ds)}\nds[0]={ds[0]}")
-            del data
+            log.info(
+                f"train_data_sample_frac={train_data_sample_frac}, len(tra)={len(self.tra_ds):,}\ntra[0]={self.tra_ds[0]}"
+            )
+            gc.collect()
+            self.val_ds = self._dataset(
+                filepath=self.conf["validation_data_file"],
+                tokenizer_directory=self.mc["directory"],
+                model_max_length=self.conf.getint("model_max_length"),
+                window_length=self.conf.getint("window_length"),
+                window_stride=self.conf.getint("window_stride"),
+                sample_frac=1,
+            )
+            log.info(f"len(val)={len(self.val_ds):,}\nval[0]={self.val_ds[0]}")
             gc.collect()
         log.info(f"Prepare dataset...DONE. Time taken {str(tim.elapsed)}")
-        return ds
 
     def _validation_result(
         self,
-        ds: Union[Dataset, torch.utils.data.Subset],
         predictions: np.ndarray,
         epochs: int,
     ) -> None:
+        if self.val_ds is None:
+            raise ValueError("validation dataset must not be None")
         y_true: List[int] = []
         y_pred: List[int] = []
         classes = NerDataset.EVALUATION_CLASSES
-        for i in range(len(ds)):
+        for i in range(len(self.val_ds)):
             # remember to convert torch tensor to python list!
-            for j, label in enumerate(ds[i]["labels"].tolist()):
+            for j, label in enumerate(self.val_ds[i]["labels"].tolist()):
                 if label not in classes:
                     continue
                 y_true.append(label)
@@ -485,25 +517,18 @@ class NerTask(Task):
 
     def _train_final_model(
         self,
-        ds: NerDataset,
         hps: Dict[str, ParamType],
     ) -> None:
+        if self.tra_ds is None:
+            raise ValueError("train dataset must not be None")
+        if self.val_ds is None:
+            raise ValueError("validation dataset must not be None")
         log.info("Train final model on best Hps...")
         log.info(f"hps={hps}")
         gc.collect()
         torch.cuda.empty_cache()
         with scml.Timer() as tim:
-            # TODO split beforehand and save versioned test set
-            splitter = KFold(
-                n_splits=int(100 / self.conf.getint("final_model_validation_percent"))
-            )
-            dummy = np.zeros(len(ds))
-            y = [max(z) for z in ds.labels]
-            for ti, vi in splitter.split(dummy, y=y):
-                tra_ds = torch.utils.data.Subset(ds, ti)
-                val_ds = torch.utils.data.Subset(ds, vi)
-                break
-            log.info(f"len(tra_ds)={len(tra_ds):,}, len(val_ds)={len(val_ds):,}")
+            log.info(f"len(tra)={len(self.tra_ds):,}, len(val)={len(self.val_ds):,}")
             model = NerModel(
                 pretrained_dir=Path(self.mc["directory"]),
                 lr=float(hps["lr"]),
@@ -533,14 +558,14 @@ class NerTask(Task):
             trainer.fit(
                 model,
                 train_dataloaders=DataLoader(
-                    tra_ds,
+                    self.tra_ds,
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=True,
                     num_workers=num_workers,
                     persistent_workers=True if num_workers > 0 else False,
                 ),
                 val_dataloaders=DataLoader(
-                    val_ds,
+                    self.val_ds,
                     batch_size=self.conf.getint("batch_size"),
                     shuffle=False,
                     num_workers=num_workers,
@@ -549,7 +574,6 @@ class NerTask(Task):
             )
             if model.best_val_pred is not None:
                 self._validation_result(
-                    ds=val_ds,
                     predictions=model.best_val_pred,
                     epochs=trainer.current_epoch,
                 )
@@ -557,9 +581,8 @@ class NerTask(Task):
 
     def run(self) -> None:
         with scml.Timer() as tim:
-            ds = self._dataset()
+            self._get_datasets()
             self._train_final_model(
-                ds=ds,
                 hps={
                     "lr": self.conf.getfloat("lr"),
                     "swa_start_epoch": self.conf.getfloat("swa_start_epoch"),
