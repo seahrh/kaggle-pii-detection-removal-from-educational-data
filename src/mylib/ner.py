@@ -61,6 +61,18 @@ class NerDataset(Dataset):
     }
     LABEL_TO_ID: Mapping[str, int] = {v: k for k, v in ID_TO_LABEL.items()}
     IGNORE_LABEL: int = -100
+    EVALUATION_CLASSES = list(range(1, 15))  # exclude `Outside` class from evaluation
+
+    @staticmethod
+    def stratification_group(easy: bool, medium: bool, hard: bool) -> int:
+        ba: List[str] = ["0", "0", "0"]
+        if easy:
+            ba[2] = "1"
+        if medium:
+            ba[1] = "1"
+        if hard:
+            ba[0] = "1"
+        return int("".join(ba), base=2)
 
     @staticmethod
     def split(n: int, window_length: int, window_stride: int) -> List[Tuple[int, int]]:
@@ -86,6 +98,7 @@ class NerDataset(Dataset):
         self.word_ranges: List[Tuple[int, int]] = []
         self.texts: List[List[str]] = []
         self.labels: List[List[str]] = []
+        self.stratification_groups: List[int] = []
         for i in range(len(texts)):
             for j, k in self.split(
                 n=len(texts[i]),
@@ -407,55 +420,67 @@ class NerTask(Task):
     ) -> None:
         y_true: List[int] = []
         y_pred: List[int] = []
+        classes = NerDataset.EVALUATION_CLASSES
         for i in range(len(ds)):
             # remember to convert torch tensor to python list!
             for j, label in enumerate(ds[i]["labels"].tolist()):
-                if label < 1:  # exclude labels 0 and -100
+                if label not in classes:
                     continue
                 y_true.append(label)
                 # (sequences, sequence length, classes)
                 y_pred.append(np.argmax(predictions[i][j]).item())
         log.debug(f"y_true={y_true}\ny_pred={y_pred}")
+        f5_scores = fbeta_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            beta=5,
+            average=None,
+            labels=classes,
+        )
+        recall_scores = recall_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            average=None,
+            labels=classes,
+        )
+        precision_scores = precision_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            average=None,
+            labels=classes,
+        )
         rows = []
-        label_indices = list(NerDataset.ID_TO_LABEL.keys())
-        label_indices.sort()
-        for label_index in label_indices:
-            label_y_true = np.where(y_true == label_index, 1, 0)
-            exists = label_y_true.sum() > 0
-            f5: float = 0
-            recall: float = 0
-            precision: float = 0
-            if exists:
-                label_y_pred = np.where(y_pred == label_index, 1, 0)
-                f5 = fbeta_score(
-                    y_true=label_y_true,
-                    y_pred=label_y_pred,
-                    beta=5,
-                    average="binary",
-                )
-                recall = recall_score(
-                    y_true=label_y_true, y_pred=label_y_pred, average="binary"
-                )
-                precision = precision_score(
-                    y_true=label_y_true, y_pred=label_y_pred, average="binary"
-                )
-            rows.append((f5, recall, precision, label_index))
+        for i in range(len(f5_scores)):
+            rows.append(
+                (f5_scores[i], recall_scores[i], precision_scores[i], classes[i])
+            )
         rows.sort()
         labels = {}
         for f5, recall, precision, label_index in rows:
             label = NerDataset.ID_TO_LABEL[label_index]
             labels[label] = {"micro_f5": f5, "recall": recall, "precision": precision}
         self.validation_result = {
+            "epochs": epochs,
             "micro_f5": fbeta_score(
                 y_true=y_true,
                 y_pred=y_pred,
                 beta=5,
                 average="micro",
+                labels=classes,
             ),
-            "recall": recall_score(y_true=y_true, y_pred=y_pred, average="micro"),
-            "precision": precision_score(y_true=y_true, y_pred=y_pred, average="micro"),
+            "recall": recall_score(
+                y_true=y_true,
+                y_pred=y_pred,
+                average="micro",
+                labels=classes,
+            ),
+            "precision": precision_score(
+                y_true=y_true,
+                y_pred=y_pred,
+                average="micro",
+                labels=classes,
+            ),
             "labels": labels,
-            "epochs": epochs,
         }
 
     def _train_final_model(
@@ -526,7 +551,7 @@ class NerTask(Task):
                 self._validation_result(
                     ds=val_ds,
                     predictions=model.best_val_pred,
-                    epochs=trainer.current_epoch + 1,
+                    epochs=trainer.current_epoch,
                 )
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
 
