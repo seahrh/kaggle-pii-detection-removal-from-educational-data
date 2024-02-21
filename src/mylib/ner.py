@@ -408,12 +408,14 @@ class NerTask(Task):
         y_true: List[int] = []
         y_pred: List[int] = []
         for i in range(len(ds)):
-            for j, label in enumerate(ds[i]["labels"]):
+            # remember to convert torch tensor to python list!
+            for j, label in enumerate(ds[i]["labels"].tolist()):
                 if label < 1:  # exclude labels 0 and -100
                     continue
                 y_true.append(label)
                 # (sequences, sequence length, classes)
                 y_pred.append(np.argmax(predictions[i][j]).item())
+        log.debug(f"y_true={y_true}\ny_pred={y_pred}")
         rows = []
         label_indices = list(NerDataset.ID_TO_LABEL.keys())
         label_indices.sort()
@@ -424,15 +426,18 @@ class NerTask(Task):
             recall: float = 0
             precision: float = 0
             if exists:
+                label_y_pred = np.where(y_pred == label_index, 1, 0)
                 f5 = fbeta_score(
-                    y_true=y_true,
-                    y_pred=y_pred,
+                    y_true=label_y_true,
+                    y_pred=label_y_pred,
                     beta=5,
                     average="binary",
                 )
-                recall = recall_score(y_true=y_true, y_pred=y_pred, average="binary")
+                recall = recall_score(
+                    y_true=label_y_true, y_pred=label_y_pred, average="binary"
+                )
                 precision = precision_score(
-                    y_true=y_true, y_pred=y_pred, average="binary"
+                    y_true=label_y_true, y_pred=label_y_pred, average="binary"
                 )
             rows.append((f5, recall, precision, label_index))
         rows.sort()
