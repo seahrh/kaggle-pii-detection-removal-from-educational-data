@@ -155,16 +155,23 @@ def blend_predictions(
         Tuple[int, int],
         torch.Tensor,
     ],
-    thresholds: Mapping[str, float],
+    outside_label_threshold: float,
 ) -> pd.DataFrame:
     rows = []
     for k, v in dw_map.items():
         v = np.array(v, dtype=np.float32)
         p = np.matmul(weights, v).flatten()
-        i = np.argmax(p)
-        label = NerDataset.ID_TO_LABEL[i]
-        if i != 0 and p[i] >= thresholds[label]:
-            rows.append({"document": k[0], "token": k[1], "label": label})
+        indices = (-p).argsort()  # sort in descending order
+        i = 0
+        # get top-2 if outside label is top-1 but falls below threshold
+        if indices[0] == 0 and p[indices[0]] < outside_label_threshold:
+            i = indices[1]
+        elif indices[0] > 0:
+            i = indices[0]
+        if i > 0:
+            rows.append(
+                {"document": k[0], "token": k[1], "label": NerDataset.ID_TO_LABEL[i]}
+            )
     df = pd.DataFrame.from_records(rows)
     df["row_id"] = df.index
     return df
