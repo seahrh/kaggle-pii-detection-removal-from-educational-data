@@ -5,7 +5,7 @@ python3 -m torch.distributed.run \
   --nproc_per_node 2 \
   --nnodes 1 \
   -m mylib.train \
-  --conf "train.ini" \
+  --conf "wsl.ini" \
   --task "ner"
 
 wait
