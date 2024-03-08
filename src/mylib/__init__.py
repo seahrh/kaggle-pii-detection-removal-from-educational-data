@@ -30,7 +30,9 @@ def training_callbacks(
     verbose: bool = True,
 ) -> List[pl.callbacks.Callback]:
     return [
-        pl.callbacks.EarlyStopping(monitor=monitor, patience=patience, verbose=verbose),
+        pl.callbacks.EarlyStopping(
+            monitor=monitor, patience=patience, verbose=verbose, divergence_threshold=10
+        ),
         pl.callbacks.ModelCheckpoint(
             monitor=monitor,
             verbose=verbose,
