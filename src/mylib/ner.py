@@ -255,8 +255,8 @@ class NerModel(pl.LightningModule):
             config=config,
             ignore_mismatched_sizes=True,
         )
-        self.model = model
-        self.model_to_save = self.model
+        self.model: PreTrainedModel = model
+        self.model_to_save: PreTrainedModel = self.model
         self.swa_start_epoch = swa_start_epoch
         self.swa_enable: bool = self.swa_start_epoch >= 0
         # only `AveragedModel.module` is used in its forward pass, so we save `AveragedModel.module`
@@ -368,7 +368,6 @@ class NerTask(Task):
         super().__init__(conf=conf)
         self.tra_ds: Optional[NerDataset] = None
         self.val_ds: Optional[NerDataset] = None
-        self.model: Optional[NerModel] = None
         self.trainer: Optional[pl.Trainer] = None
         self.batch_size: int = self.conf.getint("batch_size")
         self.devices: Union[List[int], str, int] = "auto"
@@ -379,6 +378,11 @@ class NerTask(Task):
         elif torch.backends.mps.is_available():
             self.accelerator = "mps"
             self.devices = 1
+        self.eval_every_n_steps: int = self.conf.getint("eval_every_n_steps")
+        self.callbacks = training_callbacks(
+            patience=self.conf.getint("patience"),
+            eval_every_n_steps=self.eval_every_n_steps,
+        )
 
     @staticmethod
     def _dataset(
@@ -422,6 +426,15 @@ class NerTask(Task):
             window_stride=window_stride,
         )
 
+    def _best_model(self) -> NerModel:
+        best_model_path: str = ""
+        for cb in self.callbacks:
+            if hasattr(cb, "best_model_path"):
+                best_model_path = getattr(cb, "best_model_path")
+                break
+        log.info(f"best_model_path={best_model_path}")
+        return NerModel.load_from_checkpoint(best_model_path)  # type: ignore[no-any-return]
+
     def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
         with scml.Timer() as tim:
@@ -447,16 +460,16 @@ class NerTask(Task):
             gc.collect()
         log.info(f"Prepare dataset...DONE. Time taken {str(tim.elapsed)}")
 
-    def _evaluation(self, epochs: int, device: Optional[torch.device] = None) -> None:
+    def _evaluation(
+        self, model: PreTrainedModel, epochs: int, device: Optional[torch.device] = None
+    ) -> None:
         if self.val_ds is None:
             raise ValueError("validation dataset must not be None")
-        if self.model is None:
-            raise ValueError("model must not be None")
         log.info("Evaluation...")
         with scml.Timer() as tim:
             predictions = predict_ner(
                 ds=self.val_ds,
-                model=self.model.model_to_save,
+                model=model,
                 batch_size=self.batch_size * 8,
                 device=device,
                 dtype=np.float16,
@@ -545,28 +558,17 @@ class NerTask(Task):
         torch.cuda.empty_cache()
         with scml.Timer() as tim:
             log.info(f"len(tra)={len(self.tra_ds):,}, len(val)={len(self.val_ds):,}")
-            self.model = NerModel(
-                pretrained_dir=Path(self.mc["directory"]),
-                lr=float(hps["lr"]),
-                swa_start_epoch=int(hps["swa_start_epoch"]),
-                scheduler_conf=self.scheduler_conf,
-                conf=mylib.transformers_conf(self.conf),
-            )
-            eval_every_n_steps: int = self.conf.getint("eval_every_n_steps")
             self.trainer = pl.Trainer(
                 default_root_dir=self.conf["job_dir"],
                 strategy=self.conf.get("train_strategy", "auto"),
                 accelerator=self.accelerator,
                 devices=self.devices,
                 max_epochs=self.conf.getint("epochs"),
-                check_val_every_n_epoch=None if eval_every_n_steps > 0 else 1,
+                check_val_every_n_epoch=None if self.eval_every_n_steps > 0 else 1,
                 val_check_interval=(
-                    eval_every_n_steps if eval_every_n_steps > 0 else 1.0
+                    self.eval_every_n_steps if self.eval_every_n_steps > 0 else 1.0
                 ),
-                callbacks=training_callbacks(
-                    patience=self.conf.getint("patience"),
-                    eval_every_n_steps=eval_every_n_steps,
-                ),
+                callbacks=self.callbacks,
                 deterministic=False,
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
             )
@@ -575,7 +577,13 @@ class NerTask(Task):
             if ckpt_path is not None and len(ckpt_path) == 0:
                 ckpt_path = None
             self.trainer.fit(
-                self.model,
+                model=NerModel(
+                    pretrained_dir=Path(self.mc["directory"]),
+                    lr=float(hps["lr"]),
+                    swa_start_epoch=int(hps["swa_start_epoch"]),
+                    scheduler_conf=self.scheduler_conf,
+                    conf=mylib.transformers_conf(self.conf),
+                ),
                 train_dataloaders=DataLoader(
                     self.tra_ds,
                     batch_size=self.batch_size,
@@ -592,14 +600,19 @@ class NerTask(Task):
                 ),
                 ckpt_path=ckpt_path,
             )
+        log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
+
+    def _save_hf_model(self, model: PreTrainedModel, dst_path: Path) -> None:
+        log.info("Save huggingface model...")
+        with scml.Timer() as tim:
+            model.save_pretrained(str(dst_path))  # type: ignore
             # logging special params
-            model = self.model.model_to_save
             white = ["weighted_layer_pooling", "log_vars"]
             for name, param in model.named_parameters():  # type: ignore
                 for w in white:
                     if name.startswith(w):
                         log.info(f"{name}={param}")
-        log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
+        log.info(f"Save huggingface model...DONE. Time taken {str(tim.elapsed)}")
 
     def run(self) -> None:
         with scml.Timer() as tim:
@@ -616,11 +629,11 @@ class NerTask(Task):
                     log.info("Exit now because signal.SIGTERM signal was received.")
                     return
                 if self.trainer.is_global_zero:
-                    if self.model is not None:
-                        self._save_hf_model(
-                            model=self.model.model_to_save,
-                            dirpath=Path(self.conf["job_dir"]),
-                        )
+                    best: NerModel = self._best_model()
+                    self._save_hf_model(
+                        model=best.model_to_save,
+                        dst_path=Path(self.conf["job_dir"]),
+                    )
                     device: Optional[torch.device] = None
                     if self.accelerator == "gpu":
                         device = torch.device(
@@ -628,7 +641,11 @@ class NerTask(Task):
                         )
                     elif self.accelerator == "mps":
                         device = torch.device("mps")
-                    self._evaluation(epochs=self.trainer.current_epoch, device=device)
+                    self._evaluation(
+                        model=best.model_to_save,
+                        epochs=self.trainer.current_epoch,
+                        device=device,
+                    )
                     self._save_job_config()
                     self._copy_tokenizer_files(src=Path(self.mc["directory"]))
         if self.trainer is not None and self.trainer.is_global_zero:

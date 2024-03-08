@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 import scml
 import torch
 from scml import configparserx as cpx
-from transformers import AutoConfig, PreTrainedModel
+from transformers import AutoConfig
 
 __all__ = [
     "Task",
@@ -121,12 +121,6 @@ class Task:
                     continue
                 shutil.copy(str(f), str(dst))
         log.info(f"Copy tokenizer files...DONE. Time taken {str(tim.elapsed)}")
-
-    def _save_hf_model(self, model: PreTrainedModel, dirpath: Path) -> None:
-        log.info("Save huggingface model...")
-        with scml.Timer() as tim:
-            model.save_pretrained(str(dirpath))  # type: ignore
-        log.info(f"Save huggingface model...DONE. Time taken {str(tim.elapsed)}")
 
 
 from .ner import *
