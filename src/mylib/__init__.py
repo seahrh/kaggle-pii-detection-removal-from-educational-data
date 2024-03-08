@@ -25,13 +25,19 @@ log = scml.get_logger(__name__)
 
 def training_callbacks(
     patience: int,
+    eval_every_n_steps: int,
     monitor: str = "val_loss",
     verbose: bool = True,
 ) -> List[pl.callbacks.Callback]:
     return [
         pl.callbacks.EarlyStopping(monitor=monitor, patience=patience, verbose=verbose),
-        pl.callbacks.ModelCheckpoint(monitor=monitor, verbose=verbose, save_top_k=1),
-        pl.callbacks.LearningRateMonitor(logging_interval="epoch"),
+        pl.callbacks.ModelCheckpoint(
+            monitor=monitor,
+            verbose=verbose,
+            save_top_k=1,
+            every_n_train_steps=eval_every_n_steps if eval_every_n_steps > 0 else None,
+        ),
+        pl.callbacks.LearningRateMonitor(logging_interval=None),
     ]
 
 

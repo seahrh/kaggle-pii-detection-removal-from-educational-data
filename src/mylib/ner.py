@@ -551,16 +551,23 @@ class NerTask(Task):
                 scheduler_conf=self.scheduler_conf,
                 conf=mylib.transformers_conf(self.conf),
             )
+            eval_every_n_steps: int = self.conf.getint("eval_every_n_steps")
             self.trainer = pl.Trainer(
                 default_root_dir=self.conf["job_dir"],
                 strategy=self.conf.get("train_strategy", "auto"),
                 accelerator=self.accelerator,
                 devices=self.devices,
                 max_epochs=self.conf.getint("epochs"),
-                callbacks=training_callbacks(patience=self.conf.getint("patience")),
+                check_val_every_n_epoch=None if eval_every_n_steps > 0 else 1,
+                val_check_interval=(
+                    eval_every_n_steps if eval_every_n_steps > 0 else 1.0
+                ),
+                callbacks=training_callbacks(
+                    patience=self.conf.getint("patience"),
+                    eval_every_n_steps=eval_every_n_steps,
+                ),
                 deterministic=False,
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
-                log_every_n_steps=50,
             )
             num_workers: int = self.conf.getint("dataloader_num_workers")
             ckpt_path: Optional[str] = self.conf.get("resume_training_from", "")
