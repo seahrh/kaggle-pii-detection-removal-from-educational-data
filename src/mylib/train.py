@@ -49,7 +49,6 @@ def _main(argv=None):
         required=False,
         help="path to home directory",
     )
-    parser.add_argument("--job-name", dest="job_name", required=False, help="job name")
     parser.add_argument(
         "--task",
         dest="task_name",
@@ -61,9 +60,9 @@ def _main(argv=None):
     )
     args, unknown_args = parser.parse_known_args(argv)
     conf = cpx.load(Path(args.conf))
+    pl.seed_everything(conf["DEFAULT"].getint("seed"))
     if args.home_dir != "":
         conf["DEFAULT"]["home_dir"] = str(Path(args.home_dir).resolve())
-    job_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_dir: str = conf[args.task_name]["model_dir"]
     backbone: str = ""
     if "backbone" in conf[args.task_name]:
@@ -73,13 +72,14 @@ def _main(argv=None):
     if backbone == "":
         raise ValueError("backbone must not be empty string")
     conf[args.task_name]["backbone"] = backbone
-    job_dir = Path(model_dir) / args.task_name / backbone / job_ts
-    if args.job_name is not None and len(args.job_name) != 0:
-        job_dir = Path(model_dir) / args.job_name / job_ts
-    job_dir.mkdir(parents=True, exist_ok=True)
-    pl.seed_everything(conf["DEFAULT"].getint("seed"))
-    conf["DEFAULT"]["job_ts"] = job_ts
-    conf["DEFAULT"]["job_dir"] = str(job_dir)
+    s: str = conf["DEFAULT"].get("job_dir", "")
+    if len(s) == 0:
+        job_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        job_dir = Path(model_dir) / args.task_name / backbone / job_ts
+        job_dir.mkdir(parents=True, exist_ok=True)
+        conf["DEFAULT"]["job_dir"] = str(job_dir.resolve())
+    elif not Path(s).is_dir():
+        raise ValueError(f"job_dir does not exist [{s}]")
     log.info(f"args={args}\nunknown_args={unknown_args}")
     log.info(cpx.as_dict(conf))
     task = None

@@ -9,7 +9,7 @@ setup(
         "pandas==2.2.0",
         "pyarrow==15.0.0",
         "scikit-learn==1.2.2",
-        "sentencepiece==0.1.99",
+        "sentencepiece==0.1.99",  # no support yet for py3.12
         "spacy==3.7.2",
         "protobuf==3.20.3",  # required for deberta-v3 tokenizer
         "transformers==4.37.0",
@@ -37,7 +37,7 @@ setup(
     packages=find_packages("src", exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_dir={"": "src"},
     include_package_data=True,
-    description="Detect AI Generated Text 2023 Kaggle Competition",
+    description="The Learning Agency Lab - PII Detection 2024 Kaggle Competition",
     license="MIT",
     author="seahrh",
     author_email="seahrh@gmail.com",

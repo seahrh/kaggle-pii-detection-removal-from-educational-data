@@ -1,5 +1,4 @@
 import json
-import os
 import shutil
 from configparser import ConfigParser, SectionProxy
 from pathlib import Path
@@ -8,13 +7,12 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 import numpy as np
 import pytorch_lightning as pl
 import scml
-from pytorch_lightning.strategies import DeepSpeedStrategy
+import torch
 from scml import configparserx as cpx
 from transformers import AutoConfig, PreTrainedModel
 
 __all__ = [
     "Task",
-    "Trainer",
     "training_callbacks",
     "transformers_conf",
     "ParamType",
@@ -52,28 +50,19 @@ def transformers_conf(conf: SectionProxy) -> Dict[str, ParamType]:
     return res
 
 
-class Trainer(pl.Trainer):
+class DeprecatedTrainer(pl.Trainer):
     def save_checkpoint(
         self,
         filepath,
         weights_only: bool = False,
         storage_options: Optional[Any] = None,
     ) -> None:
-        if self.is_global_zero and not isinstance(self.strategy, DeepSpeedStrategy):
+        torch.distributed.barrier()
+        if self.is_global_zero:
             # save oof predictions from best model
             v = getattr(self.lightning_module, "val_pred", None)
             if v is not None:
                 self.lightning_module.best_val_pred = np.array(v, dtype=np.float16)  # type: ignore
-            model = self.lightning_module.model_to_save
-            white = ["weighted_layer_pooling", "log_vars"]
-            for name, param in model.named_parameters():  # type: ignore
-                for w in white:
-                    if name.startswith(w):
-                        log.info(f"{name}={param}")
-            if isinstance(model, PreTrainedModel):
-                dirpath = os.path.split(filepath)[0]
-                model.save_pretrained(dirpath)  # type: ignore
-                return
         super().save_checkpoint(filepath, weights_only, storage_options)
 
 
@@ -104,7 +93,7 @@ class Task:
     def _copy_tokenizer_files(self, src: Path) -> None:
         log.info("Copy tokenizer files...")
         with scml.Timer() as tim:
-            dst = Path(self.conf["job_dir"]) / "lightning_logs/version_0/checkpoints"
+            dst = Path(self.conf["job_dir"])
             for f in src.glob("*.txt"):
                 if not f.is_file():
                     continue
@@ -124,6 +113,12 @@ class Task:
                     continue
                 shutil.copy(str(f), str(dst))
         log.info(f"Copy tokenizer files...DONE. Time taken {str(tim.elapsed)}")
+
+    def _save_hf_model(self, model: PreTrainedModel, dirpath: Path) -> None:
+        log.info("Save huggingface model...")
+        with scml.Timer() as tim:
+            model.save_pretrained(str(dirpath))  # type: ignore
+        log.info(f"Save huggingface model...DONE. Time taken {str(tim.elapsed)}")
 
 
 from .ner import *

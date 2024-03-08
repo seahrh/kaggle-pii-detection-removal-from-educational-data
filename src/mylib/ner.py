@@ -1,7 +1,5 @@
 import gc
 import json
-import math
-import random
 from configparser import ConfigParser, SectionProxy
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
@@ -26,7 +24,7 @@ from transformers import (
 )
 
 import mylib
-from mylib import ParamType, Task, Trainer, training_callbacks
+from mylib import ParamType, Task, training_callbacks
 
 __all__ = [
     "NerDataset",
@@ -141,7 +139,9 @@ class NerDataset(Dataset):
                 prev = wid
             res["labels"] = torch.tensor(
                 labels,
-                dtype=torch.int32,
+                # use int64 instead of int32 to prevent error on nvidia gpu
+                # https://stackoverflow.com/questions/69742930/runtimeerror-nll-loss-forward-reduce-cuda-kernel-2d-index-not-implemented-for
+                dtype=torch.int64,
             )
         return res
 
@@ -159,8 +159,7 @@ def blend_predictions(
 ) -> pd.DataFrame:
     rows = []
     for k, v in dw_map.items():
-        v = np.array(v, dtype=np.float32)
-        p = np.matmul(weights, v).flatten()
+        p = np.matmul(weights, np.array(v, dtype=np.float32)).flatten()
         indices = (-p).argsort()  # sort in descending order
         i = 0
         # get top-2 if outside label is top-1 but falls below threshold
@@ -267,9 +266,6 @@ class NerModel(pl.LightningModule):
             self.swa_model = torch.optim.swa_utils.AveragedModel(model=self.model)
             self.model_to_save = self.swa_model.module
         self._has_swa_started: bool = False
-        # (samples, tokens, labels)
-        self.val_pred: List[List[List[float]]] = []
-        self.best_val_pred: Optional[np.ndarray] = None
 
     def training_step(self, batch, batch_idx):
         outputs = self.model(**batch)
@@ -332,11 +328,6 @@ class NerModel(pl.LightningModule):
             for sch in self.lr_schedulers():
                 if isinstance(sch, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     sch.step(loss)
-        if batch_idx == 0:
-            self.val_pred = []
-        logits = outputs.logits.detach()
-        log.debug(f"{logits.shape} logits={logits}")
-        self.val_pred += logits.tolist()
 
     def configure_optimizers(self):
         """
@@ -377,6 +368,17 @@ class NerTask(Task):
         super().__init__(conf=conf)
         self.tra_ds: Optional[NerDataset] = None
         self.val_ds: Optional[NerDataset] = None
+        self.model: Optional[NerModel] = None
+        self.trainer: Optional[pl.Trainer] = None
+        self.batch_size: int = self.conf.getint("batch_size")
+        self.devices: Union[List[int], str, int] = "auto"
+        self.accelerator: str = "auto"
+        if torch.cuda.is_available():
+            self.accelerator = "gpu"
+            self.devices = scml.to_int_list(self.conf["gpus"])
+        elif torch.backends.mps.is_available():
+            self.accelerator = "mps"
+            self.devices = 1
 
     @staticmethod
     def _dataset(
@@ -385,17 +387,12 @@ class NerTask(Task):
         model_max_length: int,
         window_length: int,
         window_stride: int,
-        sample_frac: float = 1,
+        first_n: int = -1,
     ) -> NerDataset:
         with open(filepath) as f:
             data = json.load(f)
-        if sample_frac < 1:
-            tmp = []
-            for i in random.sample(
-                range(len(data)), k=math.ceil(sample_frac * len(data))
-            ):
-                tmp.append(data[i])
-            data = tmp
+        if first_n > 0:
+            data = data[:first_n]
         texts: List[List[str]] = []
         labels: List[List[str]] = []
         dids: List[str] = []
@@ -432,7 +429,7 @@ class NerTask(Task):
                 model_max_length=self.conf.getint("model_max_length"),
                 window_length=self.conf.getint("window_length"),
                 window_stride=self.conf.getint("window_stride"),
-                sample_frac=train_data_sample_frac,
+                # first_n=100,
             )
             log.info(
                 f"train_data_sample_frac={train_data_sample_frac}, len(tra)={len(self.tra_ds):,}\ntra[0]={self.tra_ds[0]}"
@@ -444,83 +441,94 @@ class NerTask(Task):
                 model_max_length=self.conf.getint("model_max_length"),
                 window_length=self.conf.getint("window_length"),
                 window_stride=self.conf.getint("window_stride"),
-                sample_frac=1,
             )
             log.info(f"len(val)={len(self.val_ds):,}\nval[0]={self.val_ds[0]}")
             gc.collect()
         log.info(f"Prepare dataset...DONE. Time taken {str(tim.elapsed)}")
 
-    def _validation_result(
-        self,
-        predictions: np.ndarray,
-        epochs: int,
-    ) -> None:
+    def _evaluation(self, epochs: int, device: Optional[torch.device] = None) -> None:
         if self.val_ds is None:
             raise ValueError("validation dataset must not be None")
-        y_true: List[int] = []
-        y_pred: List[int] = []
-        classes = NerDataset.EVALUATION_CLASSES
-        for i in range(len(self.val_ds)):
-            # remember to convert torch tensor to python list!
-            for j, label in enumerate(self.val_ds[i]["labels"].tolist()):
-                if label not in classes:
-                    continue
-                y_true.append(label)
-                # (sequences, sequence length, classes)
-                y_pred.append(np.argmax(predictions[i][j]).item())
-        log.debug(f"y_true={y_true}\ny_pred={y_pred}")
-        f5_scores = fbeta_score(
-            y_true=y_true,
-            y_pred=y_pred,
-            beta=5,
-            average=None,
-            labels=classes,
-        )
-        recall_scores = recall_score(
-            y_true=y_true,
-            y_pred=y_pred,
-            average=None,
-            labels=classes,
-        )
-        precision_scores = precision_score(
-            y_true=y_true,
-            y_pred=y_pred,
-            average=None,
-            labels=classes,
-        )
-        rows = []
-        for i in range(len(f5_scores)):
-            rows.append(
-                (f5_scores[i], recall_scores[i], precision_scores[i], classes[i])
+        if self.model is None:
+            raise ValueError("model must not be None")
+        log.info("Evaluation...")
+        with scml.Timer() as tim:
+            predictions = predict_ner(
+                ds=self.val_ds,
+                model=self.model.model_to_save,
+                batch_size=self.batch_size * 8,
+                device=device,
+                dtype=np.float16,
             )
-        rows.sort()
-        labels = {}
-        for f5, recall, precision, label_index in rows:
-            label = NerDataset.ID_TO_LABEL[label_index]
-            labels[label] = {"micro_f5": f5, "recall": recall, "precision": precision}
-        self.validation_result = {
-            "epochs": epochs,
-            "micro_f5": fbeta_score(
+            y_true: List[int] = []
+            y_pred: List[int] = []
+            classes = NerDataset.EVALUATION_CLASSES
+            for i in range(len(self.val_ds)):
+                # remember to convert torch tensor to python list!
+                for j, label in enumerate(self.val_ds[i]["labels"].tolist()):
+                    if label not in classes:
+                        continue
+                    y_true.append(label)
+                    # (sequences, sequence length, classes)
+                    y_pred.append(np.argmax(predictions[i][j]).item())
+            log.debug(f"y_true={y_true}\ny_pred={y_pred}")
+            f5_scores = fbeta_score(
                 y_true=y_true,
                 y_pred=y_pred,
                 beta=5,
-                average="micro",
+                average=None,
                 labels=classes,
-            ),
-            "recall": recall_score(
+            )
+            recall_scores = recall_score(
                 y_true=y_true,
                 y_pred=y_pred,
-                average="micro",
+                average=None,
                 labels=classes,
-            ),
-            "precision": precision_score(
+            )
+            precision_scores = precision_score(
                 y_true=y_true,
                 y_pred=y_pred,
-                average="micro",
+                average=None,
                 labels=classes,
-            ),
-            "labels": labels,
-        }
+            )
+            rows = []
+            for i in range(len(f5_scores)):
+                rows.append(
+                    (f5_scores[i], recall_scores[i], precision_scores[i], classes[i])
+                )
+            rows.sort()
+            labels = {}
+            for f5, recall, precision, label_index in rows:
+                label = NerDataset.ID_TO_LABEL[label_index]
+                labels[label] = {
+                    "micro_f5": f5,
+                    "recall": recall,
+                    "precision": precision,
+                }
+            self.validation_result = {
+                "epochs": epochs,
+                "micro_f5": fbeta_score(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    beta=5,
+                    average="micro",
+                    labels=classes,
+                ),
+                "recall": recall_score(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    average="micro",
+                    labels=classes,
+                ),
+                "precision": precision_score(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    average="micro",
+                    labels=classes,
+                ),
+                "labels": labels,
+            }
+        log.info(f"Evaluation...DONE. Time taken {str(tim.elapsed)}")
 
     def _train_final_model(
         self,
@@ -536,54 +544,53 @@ class NerTask(Task):
         torch.cuda.empty_cache()
         with scml.Timer() as tim:
             log.info(f"len(tra)={len(self.tra_ds):,}, len(val)={len(self.val_ds):,}")
-            model = NerModel(
+            self.model = NerModel(
                 pretrained_dir=Path(self.mc["directory"]),
                 lr=float(hps["lr"]),
                 swa_start_epoch=int(hps["swa_start_epoch"]),
                 scheduler_conf=self.scheduler_conf,
                 conf=mylib.transformers_conf(self.conf),
             )
-            devices: Union[List[int], str, int] = "auto"
-            accelerator: str = "auto"
-            if torch.cuda.is_available():
-                accelerator = "gpu"
-                devices = scml.to_int_list(self.conf["gpus"])
-            elif torch.backends.mps.is_available():
-                accelerator = "mps"
-                devices = 1
-            trainer = Trainer(
+            self.trainer = pl.Trainer(
                 default_root_dir=self.conf["job_dir"],
-                accelerator=accelerator,
-                devices=devices,
+                strategy=self.conf.get("train_strategy", "auto"),
+                accelerator=self.accelerator,
+                devices=self.devices,
                 max_epochs=self.conf.getint("epochs"),
                 callbacks=training_callbacks(patience=self.conf.getint("patience")),
                 deterministic=False,
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
-                log_every_n_steps=100,
+                log_every_n_steps=50,
             )
             num_workers: int = self.conf.getint("dataloader_num_workers")
-            trainer.fit(
-                model,
+            ckpt_path: Optional[str] = self.conf.get("resume_training_from", "")
+            if ckpt_path is not None and len(ckpt_path) == 0:
+                ckpt_path = None
+            self.trainer.fit(
+                self.model,
                 train_dataloaders=DataLoader(
                     self.tra_ds,
-                    batch_size=self.conf.getint("batch_size"),
+                    batch_size=self.batch_size,
                     shuffle=True,
                     num_workers=num_workers,
                     persistent_workers=True if num_workers > 0 else False,
                 ),
                 val_dataloaders=DataLoader(
                     self.val_ds,
-                    batch_size=self.conf.getint("batch_size"),
+                    batch_size=self.batch_size,
                     shuffle=False,
                     num_workers=num_workers,
                     persistent_workers=True if num_workers > 0 else False,
                 ),
+                ckpt_path=ckpt_path,
             )
-            if model.best_val_pred is not None:
-                self._validation_result(
-                    predictions=model.best_val_pred,
-                    epochs=trainer.current_epoch,
-                )
+            # logging special params
+            model = self.model.model_to_save
+            white = ["weighted_layer_pooling", "log_vars"]
+            for name, param in model.named_parameters():  # type: ignore
+                for w in white:
+                    if name.startswith(w):
+                        log.info(f"{name}={param}")
         log.info(f"Train final model on best Hps...DONE. Time taken {str(tim.elapsed)}")
 
     def run(self) -> None:
@@ -595,6 +602,28 @@ class NerTask(Task):
                     "swa_start_epoch": self.conf.getfloat("swa_start_epoch"),
                 },
             )
-            self._save_job_config()
-            self._copy_tokenizer_files(src=Path(self.mc["directory"]))
-        log.info(f"Total time taken {str(tim.elapsed)}. Saved {self.conf['job_dir']}")
+            torch.distributed.barrier()
+            if self.trainer is not None:
+                if self.trainer.received_sigterm:
+                    log.info("Exit now because signal.SIGTERM signal was received.")
+                    return
+                if self.trainer.is_global_zero:
+                    if self.model is not None:
+                        self._save_hf_model(
+                            model=self.model.model_to_save,
+                            dirpath=Path(self.conf["job_dir"]),
+                        )
+                    device: Optional[torch.device] = None
+                    if self.accelerator == "gpu":
+                        device = torch.device(
+                            f"cuda:{self.devices[0]}"  # type: ignore[index]
+                        )
+                    elif self.accelerator == "mps":
+                        device = torch.device("mps")
+                    self._evaluation(epochs=self.trainer.current_epoch, device=device)
+                    self._save_job_config()
+                    self._copy_tokenizer_files(src=Path(self.mc["directory"]))
+        if self.trainer is not None and self.trainer.is_global_zero:
+            log.info(
+                f"Total time taken {str(tim.elapsed)}. Saved {self.conf['job_dir']}"
+            )

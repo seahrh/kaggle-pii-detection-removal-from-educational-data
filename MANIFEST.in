@@ -1,5 +1,7 @@
 exclude *.ipynb
 include *.ini
 
-#graft models/ner/deberta_v3_base/20240228_105455
-graft models/ner/deberta_v3_base/20240302_090409
+include models/ner/deberta_v3_base/20240307_104639/config.json
+include models/ner/deberta_v3_base/20240307_104639/model.safetensors
+include models/ner/deberta_v3_base/20240307_104639/spm.model
+include models/ner/deberta_v3_base/20240307_104639/tokenizer_config.json
