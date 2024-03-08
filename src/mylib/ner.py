@@ -387,12 +387,15 @@ class NerTask(Task):
         model_max_length: int,
         window_length: int,
         window_stride: int,
-        first_n: int = -1,
+        first_n: int = 0,
     ) -> NerDataset:
         with open(filepath) as f:
             data = json.load(f)
+        # do not random sample else DDP gets different sized batches on different processes
         if first_n > 0:
             data = data[:first_n]
+        elif first_n < 0:
+            data = data[first_n:]
         texts: List[List[str]] = []
         labels: List[List[str]] = []
         dids: List[str] = []
@@ -422,18 +425,16 @@ class NerTask(Task):
     def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
         with scml.Timer() as tim:
-            train_data_sample_frac = self.conf.getfloat("train_data_sample_frac")
+            train_data_first_n: int = self.conf.getint("train_data_first_n")
             self.tra_ds = self._dataset(
                 filepath=self.conf["train_data_file"],
                 tokenizer_directory=self.mc["directory"],
                 model_max_length=self.conf.getint("model_max_length"),
                 window_length=self.conf.getint("window_length"),
                 window_stride=self.conf.getint("window_stride"),
-                # first_n=100,
+                first_n=train_data_first_n,
             )
-            log.info(
-                f"train_data_sample_frac={train_data_sample_frac}, len(tra)={len(self.tra_ds):,}\ntra[0]={self.tra_ds[0]}"
-            )
+            log.info(f"len(tra)={len(self.tra_ds):,}\ntra[0]={self.tra_ds[0]}")
             gc.collect()
             self.val_ds = self._dataset(
                 filepath=self.conf["validation_data_file"],
