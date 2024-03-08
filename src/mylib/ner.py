@@ -271,7 +271,7 @@ class NerModel(pl.LightningModule):
         outputs = self.model(**batch)
         loss = outputs.loss
         self.log(
-            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True
         )
         if not self.automatic_optimization:
             opts = self.optimizers()
@@ -318,7 +318,7 @@ class NerModel(pl.LightningModule):
         self.log(
             "val_loss",
             loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             prog_bar=True,
             logger=True,
