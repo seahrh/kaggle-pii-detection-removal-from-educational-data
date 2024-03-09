@@ -37,7 +37,10 @@ def training_callbacks(
             monitor=monitor,
             verbose=verbose,
             save_top_k=1,
-            every_n_train_steps=eval_every_n_steps if eval_every_n_steps > 0 else None,
+            save_on_train_epoch_end=False,
+            every_n_train_steps=(
+                eval_every_n_steps + 1 if eval_every_n_steps > 0 else None
+            ),
         ),
         pl.callbacks.LearningRateMonitor(logging_interval=None),
     ]
