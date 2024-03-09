@@ -318,7 +318,7 @@ class NerModel(pl.LightningModule):
         self.log(
             "val_loss",
             loss,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
