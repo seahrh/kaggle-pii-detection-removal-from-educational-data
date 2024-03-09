@@ -72,6 +72,16 @@ class NerDataset(Dataset):
         return int("".join(ba), base=2)
 
     @staticmethod
+    def stratification_group_hes(easy: bool, hard: bool, data_source_name: str) -> str:
+        ba: List[str] = ["0", "0"]
+        if easy:
+            ba[1] = "1"
+        if hard:
+            ba[0] = "1"
+        i = int("".join(ba), base=2)
+        return f"{i}_{data_source_name}"
+
+    @staticmethod
     def split(n: int, window_length: int, window_stride: int) -> List[Tuple[int, int]]:
         res = []
         i = 0
