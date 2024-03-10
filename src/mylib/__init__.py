@@ -26,7 +26,9 @@ log = scml.get_logger(__name__)
 def training_callbacks(
     patience: int,
     eval_every_n_steps: int,
+    ckpt_filename: str,
     monitor: str = "val_loss",
+    save_top_k: int = 1,
     verbose: bool = True,
 ) -> List[pl.callbacks.Callback]:
     return [
@@ -36,11 +38,13 @@ def training_callbacks(
         pl.callbacks.ModelCheckpoint(
             monitor=monitor,
             verbose=verbose,
-            save_top_k=1,
+            save_top_k=save_top_k,
             save_on_train_epoch_end=False,
             every_n_train_steps=(
                 eval_every_n_steps + 1 if eval_every_n_steps > 0 else None
             ),
+            filename=ckpt_filename,
+            auto_insert_metric_name=False,
         ),
         pl.callbacks.LearningRateMonitor(logging_interval=None),
     ]

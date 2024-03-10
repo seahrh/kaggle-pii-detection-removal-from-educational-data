@@ -392,6 +392,8 @@ class NerTask(Task):
         self.callbacks = training_callbacks(
             patience=self.conf.getint("patience"),
             eval_every_n_steps=self.eval_every_n_steps,
+            ckpt_filename=self.conf.get("ckpt_filename", ""),
+            save_top_k=self.conf.getint("ckpt_save_top_k"),
         )
 
     @staticmethod
