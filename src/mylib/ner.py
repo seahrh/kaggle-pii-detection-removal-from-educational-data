@@ -247,6 +247,7 @@ class NerModel(pl.LightningModule):
     ):
         super().__init__()
         self.automatic_optimization = True
+        self.save_hyperparameters()
         self.lr = lr
         self.scheduler_conf = list(scheduler_conf)
         for s in self.scheduler_conf:
