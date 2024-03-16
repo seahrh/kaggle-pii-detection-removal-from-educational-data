@@ -239,43 +239,26 @@ def predict_ner_proba(
 class NerModel(pl.LightningModule):
     def __init__(
         self,
-        pretrained_dir: Path,
+        model: PreTrainedModel,
         lr: float,
         scheduler_conf: Iterable[SectionProxy],
         swa_start_epoch: int = -1,
-        conf: Optional[Mapping[str, ParamType]] = None,
     ):
         super().__init__()
         self.automatic_optimization = True
-        self.save_hyperparameters()
-        self.lr = lr
-        self.scheduler_conf = list(scheduler_conf)
-        for s in self.scheduler_conf:
+        self.save_hyperparameters(ignore=["model"])
+        self.hparams.scheduler_conf = list(scheduler_conf)
+        for s in self.hparams.scheduler_conf:
             if s["qualified_name"] == "torch.optim.swa_utils.SWALR":
-                s["swa_lr"] = str(self.lr)
-        # TODO pass instantiated model to constructor if custom model
-        config = AutoConfig.from_pretrained(str(pretrained_dir))
-        config.problem_type = "single_label_classification"
-        config.id2label = NerDataset.ID_TO_LABEL
-        config.label2id = NerDataset.LABEL_TO_ID
-        if conf is not None:
-            for k, v in conf.items():
-                setattr(config, k, v)
-        model = AutoModelForTokenClassification.from_pretrained(
-            str(pretrained_dir),
-            config=config,
-            ignore_mismatched_sizes=True,
-        )
+                s["swa_lr"] = str(self.hparams.lr)
         self.model: PreTrainedModel = model
-        self.model_to_save: PreTrainedModel = self.model
-        self.swa_start_epoch = swa_start_epoch
-        self.swa_enable: bool = self.swa_start_epoch >= 0
+        self.swa_enable: bool = self.hparams.swa_start_epoch >= 0
         # only `AveragedModel.module` is used in its forward pass, so we save `AveragedModel.module`
         # see https://github.com/pytorch/pytorch/blob/master/torch/optim/swa_utils.py
         if self.swa_enable:
             self.automatic_optimization = False
             self.swa_model = torch.optim.swa_utils.AveragedModel(model=self.model)
-            self.model_to_save = self.swa_model.module
+            self.model = self.swa_model.module
         self._has_swa_started: bool = False
 
     def training_step(self, batch, batch_idx):
@@ -306,7 +289,7 @@ class NerModel(pl.LightningModule):
         epoch = self.trainer.current_epoch
         schedulers = self.lr_schedulers()
         if self.swa_enable:
-            if epoch >= self.swa_start_epoch:
+            if epoch >= self.hparams.swa_start_epoch:
                 self._has_swa_started = True
                 self.swa_model.update_parameters(self.model)
                 for sch in schedulers:
@@ -358,14 +341,14 @@ class NerModel(pl.LightningModule):
         optimizers = [
             torch.optim.AdamW(
                 self.trainer.model.parameters(),
-                lr=self.lr,
+                lr=self.hparams.lr,
                 amsgrad=False,
             )
         ]
         schedulers = torchx.schedulers_by_config(
-            optimizer=optimizers[0], sections=self.scheduler_conf
+            optimizer=optimizers[0], sections=self.hparams.scheduler_conf
         )
-        if self.swa_start_epoch >= 0:
+        if self.hparams.swa_start_epoch >= 0:
             if len(schedulers) == 0:
                 raise ValueError("For SWA, there must be at least one scheduler")
             if not isinstance(schedulers[0].scheduler, torch.optim.swa_utils.SWALR):
@@ -446,13 +429,11 @@ class NerTask(Task):
         )
 
     def _best_model(self) -> NerModel:
-        best_model_path: str = ""
-        for cb in self.callbacks:
-            if hasattr(cb, "best_model_path"):
-                best_model_path = getattr(cb, "best_model_path")
-                break
+        if self.trainer is None:
+            raise ValueError("Trainer must not be null")
+        best_model_path: str = self.trainer.checkpoint_callback.best_model_path
         log.info(f"best_model_path={best_model_path}")
-        return NerModel.load_from_checkpoint(best_model_path)  # type: ignore[no-any-return]
+        return NerModel.load_from_checkpoint(best_model_path, model=self._model())  # type: ignore[no-any-return]
 
     def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
@@ -563,6 +544,22 @@ class NerTask(Task):
             }
         log.info(f"Evaluation...DONE. Time taken {str(tim.elapsed)}")
 
+    def _model(self) -> PreTrainedModel:
+        pretrained_dir = Path(self.mc["directory"])
+        config = AutoConfig.from_pretrained(pretrained_dir)
+        config.problem_type = "single_label_classification"
+        config.id2label = NerDataset.ID_TO_LABEL
+        config.label2id = NerDataset.LABEL_TO_ID
+        conf = mylib.transformers_conf(self.conf)
+        if conf is not None:
+            for k, v in conf.items():
+                setattr(config, k, v)
+        return AutoModelForTokenClassification.from_pretrained(
+            str(pretrained_dir),
+            config=config,
+            ignore_mismatched_sizes=True,
+        )
+
     def _train_final_model(
         self,
         hps: Dict[str, ParamType],
@@ -597,11 +594,10 @@ class NerTask(Task):
                 ckpt_path = None
             self.trainer.fit(
                 model=NerModel(
-                    pretrained_dir=Path(self.mc["directory"]),
+                    model=self._model(),
                     lr=float(hps["lr"]),
                     swa_start_epoch=int(hps["swa_start_epoch"]),
                     scheduler_conf=self.scheduler_conf,
-                    conf=mylib.transformers_conf(self.conf),
                 ),
                 train_dataloaders=DataLoader(
                     self.tra_ds,
@@ -650,7 +646,7 @@ class NerTask(Task):
                 if self.trainer.is_global_zero:
                     best: NerModel = self._best_model()
                     self._save_hf_model(
-                        model=best.model_to_save,
+                        model=best.model,
                         dst_path=Path(self.conf["job_dir"]),
                     )
                     device: Optional[torch.device] = None
@@ -661,7 +657,7 @@ class NerTask(Task):
                     elif self.accelerator == "mps":
                         device = torch.device("mps")
                     self._evaluation(
-                        model=best.model_to_save,
+                        model=best.model,
                         epochs=self.trainer.current_epoch,
                         device=device,
                     )
