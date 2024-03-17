@@ -30,6 +30,7 @@ __all__ = [
     "blend_predictions",
     "predict_ner",
     "predict_ner_proba",
+    "evaluation",
     "NerModel",
     "NerTask",
 ]
@@ -232,6 +233,86 @@ def predict_ner_proba(
     )
     y_proba = F.softmax(torch.tensor(logits, dtype=torch.float32), dim=-1)
     return np.array(y_proba, dtype=dtype)
+
+
+def evaluation(
+    ds: NerDataset,
+    model: PreTrainedModel,
+    batch_size: int,
+    device: Optional[torch.device] = None,
+) -> Dict:
+    predictions = predict_ner(
+        ds=ds,
+        model=model,
+        batch_size=batch_size,
+        device=device,
+        dtype=np.float16,
+    )
+    y_true: List[int] = []
+    y_pred: List[int] = []
+    classes = NerDataset.EVALUATION_CLASSES
+    for i in range(len(ds)):
+        # remember to convert torch tensor to python list!
+        for j, label in enumerate(ds[i]["labels"].tolist()):
+            if label not in classes:
+                continue
+            y_true.append(label)
+            # (sequences, sequence length, classes)
+            y_pred.append(np.argmax(predictions[i][j]).item())
+    log.debug(f"y_true={y_true}\ny_pred={y_pred}")
+    f5_scores = fbeta_score(
+        y_true=y_true,
+        y_pred=y_pred,
+        beta=5,
+        average=None,
+        labels=classes,
+    )
+    recall_scores = recall_score(
+        y_true=y_true,
+        y_pred=y_pred,
+        average=None,
+        labels=classes,
+    )
+    precision_scores = precision_score(
+        y_true=y_true,
+        y_pred=y_pred,
+        average=None,
+        labels=classes,
+    )
+    rows = []
+    for i in range(len(f5_scores)):
+        rows.append((f5_scores[i], recall_scores[i], precision_scores[i], classes[i]))
+    rows.sort()
+    labels: Dict = {}
+    for f5, recall, precision, label_index in rows:
+        label = NerDataset.ID_TO_LABEL[label_index]
+        labels[label] = {
+            "micro_f5": f5,
+            "recall": recall,
+            "precision": precision,
+        }
+    return {
+        "micro_f5": fbeta_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            beta=5,
+            average="micro",
+            labels=classes,
+        ),
+        "recall": recall_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            average="micro",
+            labels=classes,
+        ),
+        "precision": precision_score(
+            y_true=y_true,
+            y_pred=y_pred,
+            average="micro",
+            labels=classes,
+        ),
+        "labels": labels,
+    }
 
 
 # noinspection PyAbstractClass
@@ -512,81 +593,17 @@ class NerTask(Task):
             raise ValueError("validation dataset must not be None")
         log.info("Evaluation...")
         with scml.Timer() as tim:
-            predictions = predict_ner(
-                ds=self.val_ds,
-                model=model,
-                batch_size=self.batch_size * 8,
-                device=device,
-                dtype=np.float16,
-            )
-            y_true: List[int] = []
-            y_pred: List[int] = []
-            classes = NerDataset.EVALUATION_CLASSES
-            for i in range(len(self.val_ds)):
-                # remember to convert torch tensor to python list!
-                for j, label in enumerate(self.val_ds[i]["labels"].tolist()):
-                    if label not in classes:
-                        continue
-                    y_true.append(label)
-                    # (sequences, sequence length, classes)
-                    y_pred.append(np.argmax(predictions[i][j]).item())
-            log.debug(f"y_true={y_true}\ny_pred={y_pred}")
-            f5_scores = fbeta_score(
-                y_true=y_true,
-                y_pred=y_pred,
-                beta=5,
-                average=None,
-                labels=classes,
-            )
-            recall_scores = recall_score(
-                y_true=y_true,
-                y_pred=y_pred,
-                average=None,
-                labels=classes,
-            )
-            precision_scores = precision_score(
-                y_true=y_true,
-                y_pred=y_pred,
-                average=None,
-                labels=classes,
-            )
-            rows = []
-            for i in range(len(f5_scores)):
-                rows.append(
-                    (f5_scores[i], recall_scores[i], precision_scores[i], classes[i])
-                )
-            rows.sort()
-            labels = {}
-            for f5, recall, precision, label_index in rows:
-                label = NerDataset.ID_TO_LABEL[label_index]
-                labels[label] = {
-                    "micro_f5": f5,
-                    "recall": recall,
-                    "precision": precision,
-                }
             self.validation_result = {
                 "epochs": epochs,
-                "micro_f5": fbeta_score(
-                    y_true=y_true,
-                    y_pred=y_pred,
-                    beta=5,
-                    average="micro",
-                    labels=classes,
-                ),
-                "recall": recall_score(
-                    y_true=y_true,
-                    y_pred=y_pred,
-                    average="micro",
-                    labels=classes,
-                ),
-                "precision": precision_score(
-                    y_true=y_true,
-                    y_pred=y_pred,
-                    average="micro",
-                    labels=classes,
-                ),
-                "labels": labels,
             }
+            self.validation_result.update(
+                evaluation(
+                    ds=self.val_ds,
+                    model=model,
+                    batch_size=self.batch_size * 8,
+                    device=device,
+                )
+            )
         log.info(f"Evaluation...DONE. Time taken {str(tim.elapsed)}")
 
     def _train_final_model(
