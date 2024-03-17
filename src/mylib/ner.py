@@ -91,6 +91,48 @@ class NerDataset(Dataset):
             i = i + window_length - window_stride
         return res
 
+    @staticmethod
+    def from_json(
+        filepath: str,
+        tokenizer_directory: str,
+        model_max_length: int,
+        window_length: int,
+        window_stride: int,
+        first_n: int = 0,
+    ) -> "NerDataset":
+        with open(filepath) as f:
+            data = json.load(f)
+        # do not random sample else DDP gets different sized batches on different processes
+        if first_n > 0:
+            data = data[:first_n]
+        elif first_n < 0:
+            data = data[first_n:]
+        texts: List[List[str]] = []
+        labels: List[List[str]] = []
+        dids: List[str] = []
+        for row in data:
+            texts.append(row["tokens"])
+            labels.append(row["labels"])
+            dids.append(str(row["document"]))
+        config = AutoConfig.from_pretrained(tokenizer_directory)
+        if hasattr(config, "max_position_embeddings"):
+            config.max_position_embeddings = model_max_length
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_directory,
+            model_max_length=model_max_length,
+            config=config,
+        )
+        if str(getattr(config, "model_type")).lower() == "llama":
+            tokenizer.pad_token = tokenizer.eos_token
+        return NerDataset(
+            tokenizer=tokenizer,
+            texts=texts,
+            labels=labels,
+            document_ids=dids,
+            window_length=window_length,
+            window_stride=window_stride,
+        )
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
@@ -240,6 +282,7 @@ def evaluation(
     model: PreTrainedModel,
     batch_size: int,
     device: Optional[torch.device] = None,
+    progress_bar: bool = True,
 ) -> Dict:
     predictions = predict_ner(
         ds=ds,
@@ -247,6 +290,7 @@ def evaluation(
         batch_size=batch_size,
         device=device,
         dtype=np.float16,
+        progress_bar=progress_bar,
     )
     y_true: List[int] = []
     y_pred: List[int] = []
@@ -512,48 +556,6 @@ class NerTask(Task):
             save_top_k=self.conf.getint("ckpt_save_top_k"),
         )
 
-    @staticmethod
-    def _dataset(
-        filepath: str,
-        tokenizer_directory: str,
-        model_max_length: int,
-        window_length: int,
-        window_stride: int,
-        first_n: int = 0,
-    ) -> NerDataset:
-        with open(filepath) as f:
-            data = json.load(f)
-        # do not random sample else DDP gets different sized batches on different processes
-        if first_n > 0:
-            data = data[:first_n]
-        elif first_n < 0:
-            data = data[first_n:]
-        texts: List[List[str]] = []
-        labels: List[List[str]] = []
-        dids: List[str] = []
-        for row in data:
-            texts.append(row["tokens"])
-            labels.append(row["labels"])
-            dids.append(str(row["document"]))
-        config = AutoConfig.from_pretrained(tokenizer_directory)
-        if hasattr(config, "max_position_embeddings"):
-            config.max_position_embeddings = model_max_length
-        tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_directory,
-            model_max_length=model_max_length,
-            config=config,
-        )
-        if str(getattr(config, "model_type")).lower() == "llama":
-            tokenizer.pad_token = tokenizer.eos_token
-        return NerDataset(
-            tokenizer=tokenizer,
-            texts=texts,
-            labels=labels,
-            document_ids=dids,
-            window_length=window_length,
-            window_stride=window_stride,
-        )
-
     def _best_model(self) -> NerModel:
         if self.trainer is None:
             raise ValueError("Trainer must not be null")
@@ -565,7 +567,7 @@ class NerTask(Task):
         log.info("Prepare dataset...")
         with scml.Timer() as tim:
             train_data_first_n: int = self.conf.getint("train_data_first_n")
-            self.tra_ds = self._dataset(
+            self.tra_ds = NerDataset.from_json(
                 filepath=self.conf["train_data_file"],
                 tokenizer_directory=self.mc["directory"],
                 model_max_length=self.conf.getint("model_max_length"),
@@ -575,7 +577,7 @@ class NerTask(Task):
             )
             log.info(f"len(tra)={len(self.tra_ds):,}\ntra[0]={self.tra_ds[0]}")
             gc.collect()
-            self.val_ds = self._dataset(
+            self.val_ds = NerDataset.from_json(
                 filepath=self.conf["validation_data_file"],
                 tokenizer_directory=self.mc["directory"],
                 model_max_length=self.conf.getint("model_max_length"),
