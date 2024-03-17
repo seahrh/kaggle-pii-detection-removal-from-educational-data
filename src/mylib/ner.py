@@ -23,7 +23,6 @@ from transformers import (
     PreTrainedTokenizer,
 )
 
-import mylib
 from mylib import ParamType, Task, training_callbacks
 
 __all__ = [
@@ -239,19 +238,23 @@ def predict_ner_proba(
 class NerModel(pl.LightningModule):
     def __init__(
         self,
-        model: PreTrainedModel,
+        pretrained_dir: str,
         lr: float,
         scheduler_conf: Iterable[SectionProxy],
         swa_start_epoch: int = -1,
+        gradient_checkpointing: bool = False,
+        hidden_dropout_prob: Optional[float] = None,
+        attention_probs_dropout_prob: Optional[float] = None,
+        max_position_embeddings: Optional[int] = None,
     ):
         super().__init__()
+        self.save_hyperparameters()
         self.automatic_optimization = True
-        self.save_hyperparameters(ignore=["model"])
         self.hparams.scheduler_conf = list(scheduler_conf)
         for s in self.hparams.scheduler_conf:
             if s["qualified_name"] == "torch.optim.swa_utils.SWALR":
                 s["swa_lr"] = str(self.hparams.lr)
-        self.model: PreTrainedModel = model
+        self.model: PreTrainedModel = self.pretrained_model()
         self.swa_enable: bool = self.hparams.swa_start_epoch >= 0
         # only `AveragedModel.module` is used in its forward pass, so we save `AveragedModel.module`
         # see https://github.com/pytorch/pytorch/blob/master/torch/optim/swa_utils.py
@@ -260,6 +263,32 @@ class NerModel(pl.LightningModule):
             self.swa_model = torch.optim.swa_utils.AveragedModel(model=self.model)
             self.model = self.swa_model.module
         self._has_swa_started: bool = False
+
+    def pretrained_model(self) -> PreTrainedModel:
+        config = AutoConfig.from_pretrained(self.hparams.pretrained_dir)
+        config.problem_type = "single_label_classification"
+        config.id2label = NerDataset.ID_TO_LABEL
+        config.label2id = NerDataset.LABEL_TO_ID
+        setattr(config, "gradient_checkpointing", self.hparams.gradient_checkpointing)
+        if self.hparams.hidden_dropout_prob is not None:
+            setattr(config, "hidden_dropout_prob", self.hparams.hidden_dropout_prob)
+        if self.hparams.attention_probs_dropout_prob is not None:
+            setattr(
+                config,
+                "attention_probs_dropout_prob",
+                self.hparams.attention_probs_dropout_prob,
+            )
+        if self.hparams.max_position_embeddings is not None:
+            setattr(
+                config,
+                "max_position_embeddings",
+                self.hparams.max_position_embeddings,
+            )
+        return AutoModelForTokenClassification.from_pretrained(
+            self.hparams.pretrained_dir,
+            config=config,
+            ignore_mismatched_sizes=False,
+        )
 
     def training_step(self, batch, batch_idx):
         outputs = self.model(**batch)
@@ -433,7 +462,7 @@ class NerTask(Task):
             raise ValueError("Trainer must not be null")
         best_model_path: str = self.trainer.checkpoint_callback.best_model_path
         log.info(f"best_model_path={best_model_path}")
-        return NerModel.load_from_checkpoint(best_model_path, model=self._model())  # type: ignore[no-any-return]
+        return NerModel.load_from_checkpoint(best_model_path)  # type: ignore[no-any-return]
 
     def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
@@ -544,22 +573,6 @@ class NerTask(Task):
             }
         log.info(f"Evaluation...DONE. Time taken {str(tim.elapsed)}")
 
-    def _model(self) -> PreTrainedModel:
-        pretrained_dir = Path(self.mc["directory"])
-        config = AutoConfig.from_pretrained(pretrained_dir)
-        config.problem_type = "single_label_classification"
-        config.id2label = NerDataset.ID_TO_LABEL
-        config.label2id = NerDataset.LABEL_TO_ID
-        conf = mylib.transformers_conf(self.conf)
-        if conf is not None:
-            for k, v in conf.items():
-                setattr(config, k, v)
-        return AutoModelForTokenClassification.from_pretrained(
-            str(pretrained_dir),
-            config=config,
-            ignore_mismatched_sizes=True,
-        )
-
     def _train_final_model(
         self,
         hps: Dict[str, ParamType],
@@ -594,10 +607,30 @@ class NerTask(Task):
                 ckpt_path = None
             self.trainer.fit(
                 model=NerModel(
-                    model=self._model(),
+                    pretrained_dir=self.mc["directory"],
                     lr=float(hps["lr"]),
                     swa_start_epoch=int(hps["swa_start_epoch"]),
                     scheduler_conf=self.scheduler_conf,
+                    max_position_embeddings=(
+                        self.conf.getint("max_position_embeddings")
+                        if "max_position_embeddings" in self.conf
+                        else None
+                    ),
+                    gradient_checkpointing=(
+                        self.conf.getboolean("gradient_checkpointing")
+                        if "gradient_checkpointing" in self.conf
+                        else False
+                    ),
+                    hidden_dropout_prob=(
+                        self.conf.getfloat("hidden_dropout_prob")
+                        if "hidden_dropout_prob" in self.conf
+                        else None
+                    ),
+                    attention_probs_dropout_prob=(
+                        self.conf.getfloat("attention_probs_dropout_prob")
+                        if "attention_probs_dropout_prob" in self.conf
+                        else None
+                    ),
                 ),
                 train_dataloaders=DataLoader(
                     self.tra_ds,

@@ -1,6 +1,6 @@
 import json
 import shutil
-from configparser import ConfigParser, SectionProxy
+from configparser import ConfigParser
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
@@ -14,7 +14,6 @@ from transformers import AutoConfig
 __all__ = [
     "Task",
     "training_callbacks",
-    "transformers_conf",
     "ParamType",
 ]
 
@@ -48,21 +47,6 @@ def training_callbacks(
         ),
         pl.callbacks.LearningRateMonitor(logging_interval=None),
     ]
-
-
-def transformers_conf(conf: SectionProxy) -> Dict[str, ParamType]:
-    res: Dict[str, ParamType] = {}
-    if "gradient_checkpointing" in conf:
-        res["gradient_checkpointing"] = conf.getboolean("gradient_checkpointing")
-    if "hidden_dropout_prob" in conf:
-        res["hidden_dropout_prob"] = conf.getfloat("hidden_dropout_prob")
-    if "attention_probs_dropout_prob" in conf:
-        res["attention_probs_dropout_prob"] = conf.getfloat(
-            "attention_probs_dropout_prob"
-        )
-    if "max_position_embeddings" in conf:
-        res["max_position_embeddings"] = conf.getint("max_position_embeddings")
-    return res
 
 
 class DeprecatedTrainer(pl.Trainer):
