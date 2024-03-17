@@ -338,12 +338,16 @@ class NerModel(pl.LightningModule):
             if not isinstance(sch, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 sch.step()
 
-    def validation_step(self, batch, batch_idx):
+    def _shared_eval_step(self, batch, batch_idx):
         model = self.model
         if self._has_swa_started:
             model = self.swa_model
         outputs = model(**batch)
         loss = outputs.loss
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss = self._shared_eval_step(batch, batch_idx)
         self.log(
             "val_loss",
             loss,
@@ -357,6 +361,18 @@ class NerModel(pl.LightningModule):
             for sch in self.lr_schedulers():
                 if isinstance(sch, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     sch.step(loss)
+
+    def test_step(self, batch, batch_idx):
+        loss = self._shared_eval_step(batch, batch_idx)
+        self.log(
+            "test_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+        )
 
     def configure_optimizers(self):
         """
@@ -460,9 +476,9 @@ class NerTask(Task):
     def _best_model(self) -> NerModel:
         if self.trainer is None:
             raise ValueError("Trainer must not be null")
-        best_model_path: str = self.trainer.checkpoint_callback.best_model_path
-        log.info(f"best_model_path={best_model_path}")
-        return NerModel.load_from_checkpoint(best_model_path)  # type: ignore[no-any-return]
+        ckpt_path: str = self.trainer.checkpoint_callback.best_model_path
+        log.info(f"best_model_path={ckpt_path}")
+        return NerModel.load_from_checkpoint(ckpt_path)  # type: ignore[no-any-return]
 
     def _get_datasets(self) -> None:
         log.info("Prepare dataset...")
