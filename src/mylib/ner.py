@@ -410,6 +410,7 @@ class NerModel(pl.LightningModule):
                 "max_position_embeddings",
                 self.hparams.max_position_embeddings,
             )
+        log.info(f"config.to_diff_dict={json.dumps(config.to_diff_dict(), indent=2)}")
         return AutoModelForTokenClassification.from_pretrained(
             self.hparams.pretrained_dir,
             config=config,
