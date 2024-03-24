@@ -636,7 +636,7 @@ class NerTask(Task):
                     self.eval_every_n_steps if self.eval_every_n_steps > 0 else 1.0
                 ),
                 callbacks=self.callbacks,
-                deterministic=False,
+                deterministic=True,
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
             )
             log.info(f"trainer.precision={self.trainer.precision}")
