@@ -403,6 +403,7 @@ class NerModel(pl.LightningModule):
                 "attention_probs_dropout_prob",
                 self.hparams.attention_probs_dropout_prob,
             )
+        # max_position_embeddings for deberta-v2
         if self.hparams.max_position_embeddings is not None:
             setattr(
                 config,
@@ -647,8 +648,8 @@ class NerTask(Task):
                     swa_start_epoch=int(hps["swa_start_epoch"]),
                     scheduler_conf=self.scheduler_conf,
                     max_position_embeddings=(
-                        self.conf.getint("max_position_embeddings")
-                        if "max_position_embeddings" in self.conf
+                        self.conf.getint("model_max_length")
+                        if "model_max_length" in self.conf
                         else None
                     ),
                     gradient_checkpointing=(
