@@ -627,6 +627,7 @@ class NerTask(Task):
             self.trainer = pl.Trainer(
                 default_root_dir=self.conf["job_dir"],
                 strategy=self.conf.get("train_strategy", "auto"),
+                precision=self.conf.get("train_precision", None),
                 accelerator=self.accelerator,
                 devices=self.devices,
                 max_epochs=self.conf.getint("epochs"),
@@ -638,6 +639,7 @@ class NerTask(Task):
                 deterministic=False,
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
             )
+            log.info(f"trainer.precision={self.trainer.precision}")
             num_workers: int = self.conf.getint("dataloader_num_workers")
             ckpt_path: Optional[str] = self.conf.get("resume_training_from", "")
             if ckpt_path is not None and len(ckpt_path) == 0:
