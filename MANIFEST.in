@@ -1,10 +1,10 @@
 exclude *.ipynb
 include *.ini
 
-#include models/ner/deberta_v3_large/20240309_092749/*.json
-#include models/ner/deberta_v3_large/20240309_092749/*.safetensors
-#include models/ner/deberta_v3_large/20240309_092749/*.model
+include models/ner/deberta_v3_large/20240324_153756/*.json
+include models/ner/deberta_v3_large/20240324_153756/*.safetensors
+include models/ner/deberta_v3_large/20240324_153756/*.model
 
-include models/ner/deberta_v3_base/20240309_094954/*.json
-include models/ner/deberta_v3_base/20240309_094954/*.safetensors
-include models/ner/deberta_v3_base/20240309_094954/*.model
+#include models/ner/deberta_v3_base/20240309_094954/*.json
+#include models/ner/deberta_v3_base/20240309_094954/*.safetensors
+#include models/ner/deberta_v3_base/20240309_094954/*.model
