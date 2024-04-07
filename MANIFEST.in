@@ -8,3 +8,7 @@ include *.ini
 include models/ner/deberta_v3_base/20240406_141145/*.json
 include models/ner/deberta_v3_base/20240406_141145/*.safetensors
 include models/ner/deberta_v3_base/20240406_141145/*.model
+
+include models/ner/deberta_v3_base/20240407_142840/*.json
+include models/ner/deberta_v3_base/20240407_142840/*.safetensors
+include models/ner/deberta_v3_base/20240407_142840/*.model
