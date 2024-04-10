@@ -5,6 +5,6 @@ include *.ini
 #include models/ner/deberta_v3_large/20240324_153756/*.safetensors
 #include models/ner/deberta_v3_large/20240324_153756/*.model
 
-include models/ner/deberta_v3_base/20240409_053545/*.json
-include models/ner/deberta_v3_base/20240409_053545/*.safetensors
-include models/ner/deberta_v3_base/20240409_053545/*.model
+include models/ner/deberta_v3_base/20240410_161239/*.json
+include models/ner/deberta_v3_base/20240410_161239/*.safetensors
+include models/ner/deberta_v3_base/20240410_161239/*.model
