@@ -12,9 +12,12 @@ setup(
         "sentencepiece==0.1.99",  # no support yet for py3.12
         "spacy==3.7.2",
         "protobuf==3.20.3",  # required for deberta-v3 tokenizer
-        "transformers==4.37.0",
+        "transformers==4.39.3",
         "pytorch-lightning==2.1.3",
         "tqdm==4.66.1",
+        "Faker==24.9.0",
+        "accelerate==0.29.2",
+        "bitsandbytes==0.43.1",
     ],
     extras_require={
         "embeddings": [
