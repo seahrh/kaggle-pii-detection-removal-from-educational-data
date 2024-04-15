@@ -43,12 +43,12 @@ class Prompter:
     ]
 
     ESSAY_QUESTIONS: List[str] = [
-        "how does reflection contribute to preventing misrepresentation in the design thinking process? Discuss how the design thinking approach aids in gathering insights and tackling challenges. Explore the role of visualization, mapping, and other visual tools in accurately representing information and ideas.",
-        "how can visualization tools aid stakeholders in a design thinking approach? Discuss the role of graphic representation and reflection in creating visual insights, and explore how such methods can be applied within an organization to generate innovative ideas.",
-        "how can the use of storytelling within the design thinking process overcome challenges and enhance understanding across the whole organisation? Discuss the role of storytelling in conveying experiences, engaging audiences, and fostering insight.",
-        "how can the integration of a learning launch tool within the design thinking process enhance the development and testing of ideas, prototypes, and products? Discuss how this approach can address the launch challenge, involve stakeholders, and facilitate learning throughout the project development process.",
-        "how can the integration of a mind mapping tool within the design thinking process enhance creative idea generation and insight development? Discuss the role of mind mapping in research, idea refinement, and fostering collaboration among stakeholders.",
-        "how does the design thinking process foster innovation and creativity within various activities? Explore the role of brainstorming, prototyping, and research in developing innovative ideas and approaches. Discuss how the design thinking process differs from traditional problem-solving methods.",
+        "how does reflection contribute to preventing misrepresentation in the design thinking process? Discuss how the design thinking approach aids in gathering insights and tackling challenges.",
+        "how can visualization tools aid stakeholders in a design thinking approach? Discuss the role of graphic representation and reflection in creating visual insights and fostering innovation.",
+        "how can the use of storytelling within the design thinking process overcome challenges and enhance understanding across the whole organisation? Discuss the role of storytelling in conveying experiences and insights.",
+        "how can the integration of a learning launch tool within the design thinking process enhance the development and testing of ideas, prototypes, and products? Discuss how this approach can address the launch challenge and engage stakeholders.",
+        "how can the integration of a mind mapping tool within the design thinking process generate creative ideas and insights? Discuss the role of mind mapping in research, idea refinement, and teamwork.",
+        "how does brainstorming and prototyping foster innovation and creativity? Discuss how the design thinking process differs from traditional problem-solving methods.",
     ]
 
     PLACES: List[str] = [
@@ -118,9 +118,17 @@ class Prompter:
         self.personal_urls: List[str] = list(tset)
 
     def username(self) -> str:
-        separators: List[str] = ["", "_", "__", "-", "--", "."]
+        separators: List[str] = ["_", "__", "-", "--", ".", "", ""]
         seps: List[str] = [random.choice(separators)] * 6
-        extra_words: List[str] = ["", "the", "official", "iam", "xxx", "numeric"]
+        extra_words: List[str] = [
+            "the",
+            "official",
+            "iam",
+            "xxx",
+            "numeric",
+            "",
+            "",
+        ]
         head: str = random.choice(extra_words)
         if head == "numeric":
             head = str(random.randint(1, 9999))
@@ -133,6 +141,7 @@ class Prompter:
         first_name: str = self.fake.first_name()
         last_name: str = self.fake.last_name()
         res = f"{seps[0]}{head}{seps[1]}{first_name}{seps[2]}{mid}{seps[3]}{last_name}{seps[4]}{tail}{seps[5]}"
+        res = res.strip(".")
         p = random.random()
         if p >= 0.95:
             return res.upper()
@@ -151,7 +160,30 @@ class Prompter:
             "twitter.com/@",
             "tiktok.com/@",
             "medium.com/@",
-            "blogspot.me/",
+            "blogspot.me/@",
+            "pinterest.com/",
+            "snapchat.com/",
+            "reddit.com/u/",
+            "tumblr.com/",
+            "whatsapp.com/",
+            "wechat.com/",
+            "telegram.org/",
+            "flickr.com/",
+            "quora.com/",
+            "vimeo.com/",
+            "discord.com/",
+            "twitch.tv/",
+            "meetup.com/",
+            "soundcloud.com/",
+            "vine.co/",
+            "periscope.tv/",
+            "dribbble.com/",
+            "behance.net/",
+            "VK.com/",
+            "sinaweibo.com/",
+            "renren.com/",
+            "foursquare.com/",
+            "myspace.com/",
         ]
         domain_name = random.choice(domain_names)
         username = self.username().replace(".", "")
