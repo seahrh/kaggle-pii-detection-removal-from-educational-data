@@ -7,6 +7,20 @@ from faker import Faker
 __all__ = ["Prompter"]
 
 
+def labels(
+    text: str,
+    tokens: List[str],
+    street_address: str,
+    student_name: str,
+    username: str,
+    personal_url: str,
+) -> List[str]:
+    res = ["O"] * len(tokens)
+    # s1 = text.lower()
+    # s2 = street_address.lower()
+    return res
+
+
 class Prompter:
 
     class Result(NamedTuple):
