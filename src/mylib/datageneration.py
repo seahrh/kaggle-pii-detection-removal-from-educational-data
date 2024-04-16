@@ -3,21 +3,44 @@ from typing import List, NamedTuple, Optional, Set
 
 import jinja2
 from faker import Faker
+from spacy.tokens import Token
 
 __all__ = ["Prompter", "labels"]
 
 
 def labels(
     text: str,
-    tokens: List[str],
+    tokens: List[Token],
     street_address: str,
     student_name: str,
     username: str,
     personal_url: str,
 ) -> List[str]:
+    print(f"v={street_address}")
     res = ["O"] * len(tokens)
-    # s1 = text.lower()
-    # s2 = street_address.lower()
+    s1 = text.lower()
+
+    def _apply(label: str, value: str) -> None:
+        s2 = value.lower()
+        i, j = 0, 0
+        while i < len(text):
+            i = s1.find(s2, i)
+            if i < 0:
+                break
+            beginning = True
+            while j < len(tokens):
+                if i <= tokens[j].idx < i + len(s2):
+                    if beginning:
+                        res[j] = f"B-{label}"
+                        beginning = False
+                    else:
+                        res[j] = f"I-{label}"
+                j += 1
+
+    _apply(label="STREET_ADDRESS", value=street_address)
+    _apply(label="NAME_STUDENT", value=student_name)
+    _apply(label="USERNAME", value=username)
+    _apply(label="URL_PERSONAL", value=personal_url)
     return res
 
 
@@ -120,8 +143,8 @@ class Prompter:
         In {{ domain }}, {{ essay_question }}
         Intersperse the following information in different parts of the essay:
         1. Give an example that occurred near {{ street_address }}, at a {{ place }} frequented by {{ student_name }}
-        2. Give an example that involved username: {{ username }}
-        3. Give an example that involved website URL: {{ personal_url }} [/INST]
+        2. Give an example citing: {{ username }}
+        3. Give an example citing: {{ personal_url }} [/INST]
         """
         )
         locales = [
@@ -148,8 +171,8 @@ class Prompter:
         self.student_names: List[str] = list(tset)
 
     def username(self, name: str) -> str:
-        separators: List[str] = ["_", "__", "-", "--", ".", "", ""]
-        seps: List[str] = [random.choice(separators)] * 6
+        seps: List[str] = ["_", "__", "-", "--", ".", "", "", "", ""]
+        random.shuffle(seps)
         extra_words: List[str] = [
             "the",
             "official",
@@ -161,13 +184,14 @@ class Prompter:
             "",
             "",
         ]
-        head: str = random.choice(extra_words)
+        random.shuffle(extra_words)
+        head: str = extra_words[0]
         if head == "numeric":
             head = str(random.randint(1, 9999))
-        mid: str = random.choice(extra_words)
+        mid: str = extra_words[1]
         if mid == "numeric":
             mid = str(random.randint(1, 9999))
-        tail: str = random.choice(extra_words)
+        tail: str = extra_words[2]
         if tail == "numeric":
             tail = str(random.randint(1, 9999))
         parts = name.split()
@@ -219,7 +243,9 @@ class Prompter:
             "myspace.com/",
         ]
         domain_name = random.choice(domain_names)
-        username = self.username(name=name).replace(".", "")
+        username = self.username(name=name)
+        username = username.replace(".", "")
+        username = username.replace("_", "")
         res = f"{domain_name}{username}"
         return res
 
