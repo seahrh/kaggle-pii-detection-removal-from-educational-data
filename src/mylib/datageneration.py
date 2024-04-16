@@ -4,7 +4,7 @@ from typing import List, NamedTuple, Optional, Set
 import jinja2
 from faker import Faker
 
-__all__ = ["Prompter"]
+__all__ = ["Prompter", "labels"]
 
 
 def labels(
@@ -120,8 +120,8 @@ class Prompter:
         In {{ domain }}, {{ essay_question }}
         Intersperse the following information in different parts of the essay:
         1. Give an example that occurred near {{ street_address }}, at a {{ place }} frequented by {{ student_name }}
-        2. Give an example that involved someone named {{ username }}
-        3. Give an example that involved {{ personal_url }} [/INST]
+        2. Give an example that involved username: {{ username }}
+        3. Give an example that involved website URL: {{ personal_url }} [/INST]
         """
         )
         locales = [
@@ -137,25 +137,17 @@ class Prompter:
             "vi_VN",
             "id_ID",
         ]
-        self.fake = Faker(locales)
+        fake = Faker(locales)
         tset: Set[str] = set() if street_addresses is None else street_addresses
         while len(tset) < target_size:
-            tset.add(str(self.fake.address()).replace("\n", " "))
+            tset.add(str(fake.address()).replace("\n", " "))
         self.street_addresses: List[str] = list(tset)
         tset = set() if student_names is None else student_names
         while len(tset) < target_size:
-            tset.add(f"{self.fake.first_name()} {self.fake.last_name()}")
+            tset.add(f"{fake.first_name()} {fake.last_name()}")
         self.student_names: List[str] = list(tset)
-        tset = set() if usernames is None else usernames
-        while len(tset) < target_size:
-            tset.add(self.username())
-        self.usernames: List[str] = list(tset)
-        tset = set() if personal_urls is None else personal_urls
-        while len(tset) < target_size:
-            tset.add(self.personal_url())
-        self.personal_urls: List[str] = list(tset)
 
-    def username(self) -> str:
+    def username(self, name: str) -> str:
         separators: List[str] = ["_", "__", "-", "--", ".", "", ""]
         seps: List[str] = [random.choice(separators)] * 6
         extra_words: List[str] = [
@@ -178,8 +170,9 @@ class Prompter:
         tail: str = random.choice(extra_words)
         if tail == "numeric":
             tail = str(random.randint(1, 9999))
-        first_name: str = self.fake.first_name()
-        last_name: str = self.fake.last_name()
+        parts = name.split()
+        first_name: str = parts[0]
+        last_name: str = parts[-1]
         res = f"{seps[0]}{head}{seps[1]}{first_name}{seps[2]}{mid}{seps[3]}{last_name}{seps[4]}{tail}{seps[5]}"
         res = res.strip(".")
         p = random.random()
@@ -189,7 +182,7 @@ class Prompter:
             return res.lower()
         return res
 
-    def personal_url(self) -> str:
+    def personal_url(self, name: str) -> str:
         domain_names = [
             "linkedin.com/",
             "youtube.com/",
@@ -226,7 +219,7 @@ class Prompter:
             "myspace.com/",
         ]
         domain_name = random.choice(domain_names)
-        username = self.username().replace(".", "")
+        username = self.username(name=name).replace(".", "")
         res = f"{domain_name}{username}"
         return res
 
@@ -236,8 +229,8 @@ class Prompter:
         place: str = random.choice(self.PLACES)
         street_address: str = random.choice(self.street_addresses)
         student_name: str = random.choice(self.student_names)
-        username: str = random.choice(self.usernames)
-        personal_url: str = random.choice(self.personal_urls)
+        username: str = self.username(name=student_name)
+        personal_url: str = self.personal_url(name=student_name)
         return self.Result(
             prompt=self.template.render(
                 domain=domain,
