@@ -143,7 +143,7 @@ class Prompter:
         In {{ domain }}, {{ essay_question }}
         Intersperse the following information in different parts of the essay:
         1. Give an example that occurred near {{ street_address }}, at a {{ place }} frequented by {{ student_name }}
-        2. Give an example citing: {{ username }}
+        2. Give an example citing someone named {{ username }}
         3. Give an example citing: {{ personal_url }} [/INST]
         """
         )
@@ -204,7 +204,7 @@ class Prompter:
         first_name: str = parts[0]
         last_name: str = parts[-1]
         res = f"{seps[0]}{head}{seps[1]}{first_name}{seps[2]}{mid}{seps[3]}{last_name}{seps[4]}{tail}{seps[5]}"
-        res = res.strip(".")
+        res = res.strip(".-")
         p = random.random()
         if p >= 0.95:
             return res.upper()
