@@ -194,6 +194,12 @@ class Prompter:
         tail: str = extra_words[2]
         if tail == "numeric":
             tail = str(random.randint(1, 9999))
+        if len(head) == 0:
+            seps[0], seps[1] = "", ""
+        if len(mid) == 0:
+            seps[3] = ""
+        if len(tail) == 0:
+            seps[4], seps[5] = "", ""
         parts = name.split()
         first_name: str = parts[0]
         last_name: str = parts[-1]
