@@ -5,7 +5,15 @@ import jinja2
 from faker import Faker
 from spacy.tokens import Token
 
-__all__ = ["Prompter", "labels"]
+__all__ = ["Prompter", "labels", "LabelResult"]
+
+
+class LabelResult(NamedTuple):
+    labels: List[str]
+    n_street_address: int
+    n_student_name: int
+    n_username: int
+    n_personal_url: int
 
 
 def labels(
@@ -15,33 +23,43 @@ def labels(
     student_name: str,
     username: str,
     personal_url: str,
-) -> List[str]:
-    print(f"v={street_address}")
+) -> LabelResult:
     res = ["O"] * len(tokens)
     s1 = text.lower()
 
-    def _apply(label: str, value: str) -> None:
+    def _apply(label: str, value: str) -> int:
+        n = 0
         s2 = value.lower()
-        i, j = 0, 0
+        i = 0
         while i < len(text):
             i = s1.find(s2, i)
             if i < 0:
                 break
             beginning = True
+            j = 0
             while j < len(tokens):
                 if i <= tokens[j].idx < i + len(s2):
                     if beginning:
                         res[j] = f"B-{label}"
                         beginning = False
+                        n += 1
                     else:
                         res[j] = f"I-{label}"
                 j += 1
+            i += len(s2)
+        return n
 
-    _apply(label="STREET_ADDRESS", value=street_address)
-    _apply(label="NAME_STUDENT", value=student_name)
-    _apply(label="USERNAME", value=username)
-    _apply(label="URL_PERSONAL", value=personal_url)
-    return res
+    n_street_address = _apply(label="STREET_ADDRESS", value=street_address)
+    n_student_name = _apply(label="NAME_STUDENT", value=student_name)
+    n_username = _apply(label="USERNAME", value=username)
+    n_personal_url = _apply(label="URL_PERSONAL", value=personal_url)
+    return LabelResult(
+        labels=res,
+        n_street_address=n_street_address,
+        n_student_name=n_student_name,
+        n_username=n_username,
+        n_personal_url=n_personal_url,
+    )
 
 
 class Prompter:
