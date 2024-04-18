@@ -1,4 +1,5 @@
 import random
+import re
 from typing import List, NamedTuple, Optional, Set
 
 import jinja2
@@ -14,6 +15,9 @@ class LabelResult(NamedTuple):
     n_student_name: int
     n_username: int
     n_personal_url: int
+
+
+STREET_NAME_PATTERN = re.compile(r"^([\w\s]+)\s\([\w\s]+\)$", re.IGNORECASE)
 
 
 def labels(
@@ -53,6 +57,11 @@ def labels(
     n_student_name = _apply(label="NAME_STUDENT", value=student_name)
     n_username = _apply(label="USERNAME", value=username)
     n_personal_url = _apply(label="URL_PERSONAL", value=personal_url)
+    # extract street name from full address
+    # this improved fraction of matched entity from 60% to 90%
+    m = STREET_NAME_PATTERN.match(street_address)
+    if m is not None:
+        n_street_address += _apply(label="STREET_ADDRESS", value=m[1])
     return LabelResult(
         labels=res,
         n_street_address=n_street_address,
