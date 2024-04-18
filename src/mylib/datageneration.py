@@ -58,7 +58,7 @@ def labels(
     n_username = _apply(label="USERNAME", value=username)
     n_personal_url = _apply(label="URL_PERSONAL", value=personal_url)
     # extract street name from full address
-    # this improved fraction of matched entity from 60% to 90%
+    # this improved fraction of matched entity from 60% to 99%
     m = STREET_NAME_PATTERN.match(street_address)
     if m is not None:
         n_street_address += _apply(label="STREET_ADDRESS", value=m[1])
