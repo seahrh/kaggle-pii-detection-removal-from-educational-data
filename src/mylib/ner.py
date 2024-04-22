@@ -12,6 +12,7 @@ import torch
 from pytorch_lightning.loggers import CSVLogger
 from scml import torchx
 from sklearn.metrics import fbeta_score, precision_score, recall_score
+from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -19,9 +20,12 @@ from transformers import (
     AutoConfig,
     AutoModelForTokenClassification,
     AutoTokenizer,
+    DebertaV2Model,
+    DebertaV2PreTrainedModel,
     PreTrainedModel,
     PreTrainedTokenizer,
 )
+from transformers.modeling_outputs import TokenClassifierOutput
 
 from mylib import ParamType, Task, training_callbacks
 
@@ -359,6 +363,67 @@ def evaluation(
     }
 
 
+# Copied from transformers.models.deberta.modeling_deberta.DebertaForTokenClassification with Deberta->DebertaV2
+class CustomDebertaV2ForTokenClassification(DebertaV2PreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.deberta = DebertaV2Model(config)
+        self.classifier = torchx.MultiSampleDropout(
+            classifier=nn.Linear(config.hidden_size, config.num_labels),
+            size=8,
+            start_prob=config.hidden_dropout_prob,
+            increment=0,
+        )
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, TokenClassifierOutput]:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        """
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        outputs = self.deberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = outputs[0]
+        logits = self.classifier(sequence_output)
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+        if not return_dict:
+            output = (logits,) + outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+        return TokenClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
 # noinspection PyAbstractClass
 class NerModel(pl.LightningModule):
     def __init__(
@@ -366,6 +431,7 @@ class NerModel(pl.LightningModule):
         pretrained_dir: str,
         lr: float,
         scheduler_conf: Iterable[SectionProxy],
+        model_class: str = "auto",
         swa_start_epoch: int = -1,
         gradient_checkpointing: bool = False,
         hidden_dropout_prob: Optional[float] = None,
@@ -411,6 +477,12 @@ class NerModel(pl.LightningModule):
                 self.hparams.max_position_embeddings,
             )
         log.info(f"config.to_diff_dict={json.dumps(config.to_diff_dict(), indent=2)}")
+        if self.hparams.model_class == "CustomDebertaV2ForTokenClassification":
+            return CustomDebertaV2ForTokenClassification.from_pretrained(
+                self.hparams.pretrained_dir,
+                config=config,
+                ignore_mismatched_sizes=False,
+            )
         return AutoModelForTokenClassification.from_pretrained(
             self.hparams.pretrained_dir,
             config=config,
@@ -640,6 +712,7 @@ class NerTask(Task):
                 logger=CSVLogger(save_dir=self.conf["job_dir"]),
             )
             log.info(f"trainer.precision={self.trainer.precision}")
+            log.info(f"model_class={self.conf.get('model_class', 'auto')}")
             num_workers: int = self.conf.getint("dataloader_num_workers")
             ckpt_path: Optional[str] = self.conf.get("resume_training_from", "")
             if ckpt_path is not None and len(ckpt_path) == 0:
@@ -650,6 +723,7 @@ class NerTask(Task):
                     lr=float(hps["lr"]),
                     swa_start_epoch=int(hps["swa_start_epoch"]),
                     scheduler_conf=self.scheduler_conf,
+                    model_class=self.conf.get("model_class", "auto"),
                     max_position_embeddings=(
                         self.conf.getint("model_max_length")
                         if "model_max_length" in self.conf
