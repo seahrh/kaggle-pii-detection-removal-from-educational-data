@@ -3,9 +3,9 @@ include *.ini
 include input/student_names.json
 include input/geocode-db.csv
 
-include models/ner/deberta_v3_large/20240411_044854/*.json
-include models/ner/deberta_v3_large/20240411_044854/*.safetensors
-include models/ner/deberta_v3_large/20240411_044854/*.model
+include models/ner/deberta_v3_large/20240421_072931/*.json
+include models/ner/deberta_v3_large/20240421_072931/*.safetensors
+include models/ner/deberta_v3_large/20240421_072931/*.model
 
 include models/ner/deberta_v3_base/20240420_185849/*.json
 include models/ner/deberta_v3_base/20240420_185849/*.safetensors
