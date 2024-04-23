@@ -35,6 +35,7 @@ __all__ = [
     "predict_ner",
     "predict_ner_proba",
     "evaluation",
+    "CustomDebertaV2ForTokenClassification",
     "NerModel",
     "NerTask",
 ]
