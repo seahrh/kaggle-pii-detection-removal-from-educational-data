@@ -10,3 +10,7 @@ include models/ner/deberta_v3_large/20240421_072931/*.model
 include models/ner/deberta_v3_base/20240420_185849/*.json
 include models/ner/deberta_v3_base/20240420_185849/*.safetensors
 include models/ner/deberta_v3_base/20240420_185849/*.model
+
+include models/ner/deberta_v3_base/20240424_062422/*.json
+include models/ner/deberta_v3_base/20240424_062422/*.safetensors
+include models/ner/deberta_v3_base/20240424_062422/*.model
